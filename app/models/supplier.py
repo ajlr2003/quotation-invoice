@@ -11,6 +11,8 @@ from app.models.base import AuditMixin
 
 if TYPE_CHECKING:
     from app.models.supplier_quote import SupplierQuote
+    from app.models.supplier_quotation import SupplierQuotation
+    from app.models.purchase_order import PurchaseOrder
 
 
 class Supplier(AuditMixin, Base):
@@ -47,6 +49,12 @@ class Supplier(AuditMixin, Base):
     # ── Relationships ─────────────────────────────────────────────────────
     quotes: Mapped[List["SupplierQuote"]] = relationship(
         "SupplierQuote", back_populates="supplier"
+    )
+    supplier_quotations: Mapped[List["SupplierQuotation"]] = relationship(
+        "SupplierQuotation", back_populates="supplier"
+    )
+    purchase_orders: Mapped[List["PurchaseOrder"]] = relationship(
+        "PurchaseOrder", back_populates="supplier"
     )
 
     def __repr__(self) -> str:

@@ -3,9 +3,12 @@ app/services/auth_service.py
 All authentication business logic — registration, login, token refresh,
 profile updates, password changes.
 """
+import logging
 import uuid
 from datetime import timedelta
 from typing import Optional
+
+logger = logging.getLogger(__name__)
 
 from sqlalchemy import select
 from sqlalchemy.ext.asyncio import AsyncSession
@@ -89,10 +92,27 @@ async def register_user(db: AsyncSession, payload: RegisterRequest) -> TokenResp
 # ---------------------------------------------------------------------------
 
 async def login_user(db: AsyncSession, payload: LoginRequest) -> TokenResponse:
-    user = await _get_user_by_email(db, payload.email)
+    logger.debug("Login attempt for email=%s", payload.email)
+    try:
+        user = await _get_user_by_email(db, payload.email)
+    except Exception:
+        logger.exception("DB error during user lookup for email=%s", payload.email)
+        raise HTTPException(
+            status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,
+            detail="Authentication service unavailable. Check database connection.",
+        )
 
     # Use same error for wrong email AND wrong password (prevents user enumeration)
-    if not user or not verify_password(payload.password, user.hashed_password):
+    if not user:
+        logger.debug("Login failed — no user found for email=%s", payload.email)
+        raise HTTPException(
+            status_code=status.HTTP_401_UNAUTHORIZED,
+            detail="Invalid email or password.",
+            headers={"WWW-Authenticate": "Bearer"},
+        )
+
+    if not verify_password(payload.password, user.hashed_password):
+        logger.debug("Login failed — incorrect password for email=%s", payload.email)
         raise HTTPException(
             status_code=status.HTTP_401_UNAUTHORIZED,
             detail="Invalid email or password.",
@@ -105,6 +125,7 @@ async def login_user(db: AsyncSession, payload: LoginRequest) -> TokenResponse:
             detail="This account has been deactivated.",
         )
 
+    logger.debug("Login successful for user_id=%s", user.id)
     return _make_token_response(user.id)
 
 

@@ -51,7 +51,7 @@ class User(AuditMixin, Base):
     )
     # Approvals actioned by this user
     approvals: Mapped[List["Approval"]] = relationship(
-        "Approval", back_populates="approver"
+        "Approval", back_populates="approver", foreign_keys="[Approval.approver_id]"
     )
 
     def __repr__(self) -> str:

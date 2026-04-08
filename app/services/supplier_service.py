@@ -53,7 +53,7 @@ async def create_supplier(
         )
 
     supplier = Supplier(
-        **payload.model_dump(),
+        **payload.model_dump(exclude={'email'}),
         email=payload.email.lower(),
     )
     db.add(supplier)

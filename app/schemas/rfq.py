@@ -9,6 +9,7 @@ from typing import List, Optional
 from pydantic import BaseModel, Field, field_validator, model_validator
 
 from app.models.enums import RFQStatus
+from app.schemas.supplier import SupplierResponse
 
 
 # ============================================================================
@@ -62,6 +63,7 @@ class RFQCreateRequest(BaseModel):
     currency: str                       = Field(default="USD", min_length=3, max_length=3)
     issue_date: Optional[date]          = None
     deadline: Optional[date]            = None
+    supplier_ids: List[uuid.UUID]       = Field(default_factory=list)
     # Optionally create items inline on RFQ creation
     items: Optional[List[RFQItemCreateRequest]] = Field(default=None)
 
@@ -97,6 +99,18 @@ class RFQStatusUpdateRequest(BaseModel):
     status: RFQStatus
 
 
+class SelectSupplierRequest(BaseModel):
+    supplier_id: uuid.UUID
+
+
+# ── PO summary embedded in RFQResponse ──────────────────────────────────────
+class RFQPurchaseOrderSummary(BaseModel):
+    id: uuid.UUID
+    status: str
+
+    model_config = {"from_attributes": True}
+
+
 # ── Nested summary used inside RFQResponse ───────────────────────────────────
 class RFQCreatedByResponse(BaseModel):
     id: uuid.UUID
@@ -118,16 +132,24 @@ class RFQResponse(BaseModel):
     created_by_id: uuid.UUID
     created_by: RFQCreatedByResponse
     items: List[RFQItemResponse]
-    item_count: int
+    item_count: int = 0
+    suppliers: List[SupplierResponse] = Field(default_factory=list)
+    selected_supplier_id: Optional[uuid.UUID] = None
+    selected_supplier: Optional[SupplierResponse] = None
+    has_po: bool = False
+    purchase_order: Optional[RFQPurchaseOrderSummary] = None
     created_at: datetime
     updated_at: datetime
 
     model_config = {"from_attributes": True}
 
     @classmethod
-    def from_orm_with_count(cls, rfq) -> "RFQResponse":
+    def from_orm_with_count(cls, rfq, po=None) -> "RFQResponse":
         data = cls.model_validate(rfq)
         data.item_count = len(rfq.items)
+        if po is not None:
+            data.has_po = True
+            data.purchase_order = RFQPurchaseOrderSummary.model_validate(po)
         return data
 
 
@@ -141,7 +163,7 @@ class RFQSummaryResponse(BaseModel):
     issue_date: Optional[date]
     deadline: Optional[date]
     created_by_id: uuid.UUID
-    item_count: int
+    item_count: int = 0
     created_at: datetime
     updated_at: datetime
 

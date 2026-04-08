@@ -91,14 +91,14 @@ class Quotation(AuditMixin, Base):
         primaryjoin="and_(Approval.entity_id == foreign(Quotation.id), "
                     "Approval.entity_type == 'quotation')",
         viewonly=True,
-        lazy="dynamic",
+        lazy="select",
     )
     documents: Mapped[List["Document"]] = relationship(
         "Document",
         primaryjoin="and_(Document.entity_id == foreign(Quotation.id), "
                     "Document.entity_type == 'quotation')",
         viewonly=True,
-        lazy="dynamic",
+        lazy="select",
     )
 
     def recalculate_totals(self) -> None:

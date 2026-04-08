@@ -16,13 +16,15 @@ from datetime import date
 from typing import Optional
 
 from fastapi import HTTPException, status
-from sqlalchemy import func, or_, select
+from sqlalchemy import exists, func, insert, or_, select
 from sqlalchemy.ext.asyncio import AsyncSession
 from sqlalchemy.orm import selectinload
 
 from app.models.enums import RFQStatus
-from app.models.rfq import RFQ
+from app.models.purchase_order import PurchaseOrder
+from app.models.rfq import RFQ, rfq_suppliers
 from app.models.rfq_item import RFQItem
+from app.models.supplier import Supplier
 from app.models.user import User
 from app.schemas.rfq import (
     RFQCreateRequest,
@@ -33,6 +35,7 @@ from app.schemas.rfq import (
     RFQResponse,
     RFQSummaryResponse,
     RFQUpdateRequest,
+    SelectSupplierRequest,
 )
 
 # ---------------------------------------------------------------------------
@@ -43,7 +46,8 @@ _ALLOWED_TRANSITIONS: dict[RFQStatus, set[RFQStatus]] = {
     RFQStatus.DRAFT:      {RFQStatus.SENT, RFQStatus.CANCELLED},
     RFQStatus.SENT:       {RFQStatus.RECEIVED, RFQStatus.CANCELLED},
     RFQStatus.RECEIVED:   {RFQStatus.EVALUATED, RFQStatus.CANCELLED},
-    RFQStatus.EVALUATED:  {RFQStatus.CLOSED, RFQStatus.CANCELLED},
+    RFQStatus.EVALUATED:  {RFQStatus.AWARDED, RFQStatus.CLOSED, RFQStatus.CANCELLED},
+    RFQStatus.AWARDED:    {RFQStatus.CLOSED, RFQStatus.CANCELLED},
     RFQStatus.CLOSED:     set(),
     RFQStatus.CANCELLED:  set(),
 }
@@ -52,6 +56,14 @@ _ALLOWED_TRANSITIONS: dict[RFQStatus, set[RFQStatus]] = {
 # ---------------------------------------------------------------------------
 # Helpers
 # ---------------------------------------------------------------------------
+
+async def _get_po_for_rfq(db: AsyncSession, rfq_id: uuid.UUID):
+    """Return the PurchaseOrder for this RFQ, or None if not yet created."""
+    result = await db.execute(
+        select(PurchaseOrder).where(PurchaseOrder.rfq_id == rfq_id)
+    )
+    return result.scalar_one_or_none()
+
 
 async def _get_rfq_or_404(
     db: AsyncSession,
@@ -63,6 +75,7 @@ async def _get_rfq_or_404(
         query = query.options(
             selectinload(RFQ.items),
             selectinload(RFQ.created_by),
+            selectinload(RFQ.suppliers),
         )
     result = await db.execute(query)
     rfq = result.scalar_one_or_none()
@@ -153,6 +166,14 @@ async def create_rfq(
     db.add(rfq)
     await db.flush()  # get rfq.id before adding items
 
+    # Attach invited suppliers via direct join-table insert (avoids async lazy-load)
+    if payload.supplier_ids:
+        await db.execute(
+            insert(rfq_suppliers).values(
+                [{"rfq_id": rfq.id, "supplier_id": sid} for sid in payload.supplier_ids]
+            )
+        )
+
     # Optionally create inline items
     if payload.items:
         for idx, item_payload in enumerate(payload.items, start=1):
@@ -162,11 +183,12 @@ async def create_rfq(
                 **item_payload.model_dump(),
             )
             db.add(item)
-        await db.flush()
 
-    # Reload with relationships
-    await db.refresh(rfq)
-    rfq_full = await _get_rfq_or_404(db, rfq.id)
+    await db.flush()
+    # Capture id before expiring, then expire so selectinload re-fetches suppliers
+    rfq_id = rfq.id
+    db.expire(rfq)
+    rfq_full = await _get_rfq_or_404(db, rfq_id)
     return RFQResponse.from_orm_with_count(rfq_full)
 
 
@@ -251,7 +273,8 @@ async def list_rfqs(
 
 async def get_rfq(db: AsyncSession, rfq_id: uuid.UUID) -> RFQResponse:
     rfq = await _get_rfq_or_404(db, rfq_id)
-    return RFQResponse.from_orm_with_count(rfq)
+    po = await _get_po_for_rfq(db, rfq_id)
+    return RFQResponse.from_orm_with_count(rfq, po)
 
 
 # ---------------------------------------------------------------------------
@@ -291,7 +314,8 @@ async def update_rfq(
 
     await db.flush()
     rfq_full = await _get_rfq_or_404(db, rfq_id)
-    return RFQResponse.from_orm_with_count(rfq_full)
+    po = await _get_po_for_rfq(db, rfq_id)
+    return RFQResponse.from_orm_with_count(rfq_full, po)
 
 
 # ---------------------------------------------------------------------------
@@ -309,6 +333,23 @@ async def delete_rfq(
     await db.delete(rfq)
     await db.flush()
     return {"message": f"RFQ '{rfq.rfq_number}' has been deleted."}
+
+
+# ---------------------------------------------------------------------------
+# RFQ — Send (DRAFT → SENT)
+# ---------------------------------------------------------------------------
+
+async def send_rfq(
+    db: AsyncSession,
+    rfq_id: uuid.UUID,
+    current_user: User,
+) -> RFQResponse:
+    rfq = await _get_rfq_or_404(db, rfq_id)
+    _assert_transition(rfq, RFQStatus.SENT)  # enforces draft-only rule
+    rfq.status = RFQStatus.SENT
+    await db.flush()
+    rfq_full = await _get_rfq_or_404(db, rfq_id)
+    return RFQResponse.from_orm_with_count(rfq_full)
 
 
 # ============================================================================
@@ -405,3 +446,67 @@ async def delete_rfq_item(
     await db.flush()
 
     return {"message": f"Item '{item.product_name}' (line {item.line_number}) removed from RFQ."}
+
+
+# ---------------------------------------------------------------------------
+# Select Supplier (EVALUATED / RECEIVED → AWARDED)
+# ---------------------------------------------------------------------------
+
+async def select_supplier(
+    db: AsyncSession,
+    rfq_id: uuid.UUID,
+    payload: SelectSupplierRequest,
+    current_user: User,
+) -> RFQResponse:
+    rfq = await _get_rfq_or_404(db, rfq_id)
+
+    # Allow selection from any active post-send status
+    if rfq.status not in {RFQStatus.SENT, RFQStatus.RECEIVED, RFQStatus.EVALUATED, RFQStatus.AWARDED}:
+        raise HTTPException(
+            status_code=status.HTTP_422_UNPROCESSABLE_ENTITY,
+            detail=(
+                f"Cannot select a supplier when RFQ is in '{rfq.status}' status. "
+                "RFQ must be in SENT, RECEIVED, EVALUATED, or AWARDED status."
+            ),
+        )
+
+    # Normalise to plain uuid.UUID objects — avoids asyncpg type mismatch when
+    # the values arrive as strings or UUID subclasses from path/body parsing.
+    lookup_rfq_id = uuid.UUID(str(rfq_id))
+    lookup_supplier_id = uuid.UUID(str(payload.supplier_id))
+
+    # Supplier must be linked to this RFQ via rfq_suppliers
+    membership = await db.execute(
+        select(
+            exists().where(
+                rfq_suppliers.c.rfq_id == lookup_rfq_id,
+                rfq_suppliers.c.supplier_id == lookup_supplier_id,
+            )
+        )
+    )
+    if not membership.scalar():
+        raise HTTPException(
+            status_code=status.HTTP_422_UNPROCESSABLE_ENTITY,
+            detail="Supplier is not assigned to this RFQ.",
+        )
+
+    rfq.selected_supplier_id = payload.supplier_id
+    rfq.status = RFQStatus.AWARDED
+    await db.flush()
+
+    # Reload with all relationships — populate_existing forces SQLAlchemy to
+    # re-fetch from DB even if the instance is already in the session identity map.
+    result = await db.execute(
+        select(RFQ)
+        .where(RFQ.id == rfq_id)
+        .options(
+            selectinload(RFQ.items),
+            selectinload(RFQ.created_by),
+            selectinload(RFQ.suppliers),
+            selectinload(RFQ.selected_supplier),
+        )
+        .execution_options(populate_existing=True)
+    )
+    rfq_full = result.scalar_one()
+    po = await _get_po_for_rfq(db, rfq_id)
+    return RFQResponse.from_orm_with_count(rfq_full, po)

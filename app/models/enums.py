@@ -26,6 +26,7 @@ class RFQStatus(str, enum.Enum):
     SENT        = "sent"           # sent to suppliers
     RECEIVED    = "received"       # at least one supplier quote received
     EVALUATED   = "evaluated"      # quotes compared, winner selected
+    AWARDED     = "awarded"        # supplier selected / contract awarded
     CLOSED      = "closed"
     CANCELLED   = "cancelled"
 
@@ -69,6 +70,18 @@ class ApprovalStatus(str, enum.Enum):
 class ApprovalEntityType(str, enum.Enum):
     QUOTATION   = "quotation"
     INVOICE     = "invoice"
+
+
+# ---------------------------------------------------------------------------
+# Purchase Order
+# ---------------------------------------------------------------------------
+
+class PurchaseOrderStatus(str, enum.Enum):
+    CREATED     = "created"
+    SENT        = "sent"
+    ACKNOWLEDGED= "acknowledged"
+    COMPLETED   = "completed"
+    CANCELLED   = "cancelled"
 
 
 # ---------------------------------------------------------------------------

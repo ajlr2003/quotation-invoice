@@ -32,10 +32,12 @@ from app.schemas.rfq import (
     RFQListResponse,
     RFQResponse,
     RFQUpdateRequest,
+    SelectSupplierRequest,
 )
-from app.services import rfq_service
+from app.schemas.supplier_quotation import QuotationListResponse
+from app.services import rfq_service, supplier_quotation_service
 
-router = APIRouter()
+router = APIRouter(redirect_slashes=False)
 
 
 # ============================================================================
@@ -95,10 +97,11 @@ async def list_rfqs(
     response_model=RFQResponse,
     summary="Get RFQ by ID",
 )
+@router.get("/{rfq_id}/", response_model=RFQResponse, include_in_schema=False)
 async def get_rfq(
     rfq_id: uuid.UUID,
     db: AsyncSession = Depends(get_db),
-    _current_user=Depends(get_current_user),
+    current_user=Depends(get_current_user),
 ):
     """Fetch a single RFQ with all its line items and creator info."""
     return await rfq_service.get_rfq(db, rfq_id)
@@ -144,6 +147,26 @@ async def delete_rfq(
     Only RFQs in **DRAFT** status can be deleted.
     """
     return await rfq_service.delete_rfq(db, rfq_id, current_user)
+
+
+# ============================================================================
+# RFQ action endpoints
+# ============================================================================
+
+@router.post("/{rfq_id}/send", response_model=RFQResponse, summary="Send RFQ")
+@router.patch("/{rfq_id}/send", response_model=RFQResponse, summary="Send RFQ (PATCH)")
+@router.post("/{rfq_id}/send/", response_model=RFQResponse, include_in_schema=False)
+@router.patch("/{rfq_id}/send/", response_model=RFQResponse, include_in_schema=False)
+async def send_rfq(
+    rfq_id: uuid.UUID,
+    db: AsyncSession = Depends(get_db),
+    current_user=Depends(get_current_user),
+):
+    """
+    Transition an RFQ from **DRAFT** to **SENT**.
+    Raises 422 if the RFQ is not currently in DRAFT status.
+    """
+    return await rfq_service.send_rfq(db, rfq_id, current_user)
 
 
 # ============================================================================
@@ -201,3 +224,50 @@ async def delete_rfq_item(
     Items with existing supplier quotes cannot be deleted.
     """
     return await rfq_service.delete_rfq_item(db, rfq_id, item_id, current_user)
+
+
+# ============================================================================
+# Select supplier (award RFQ)
+# ============================================================================
+
+@router.patch(
+    "/{rfq_id}/select-supplier",
+    response_model=RFQResponse,
+    summary="Select the winning supplier for an RFQ",
+)
+async def select_supplier(
+    rfq_id: uuid.UUID,
+    payload: SelectSupplierRequest,
+    db: AsyncSession = Depends(get_db),
+    current_user=Depends(get_current_user),
+):
+    """
+    Award the RFQ to a specific supplier.
+
+    **Rules:**
+    - RFQ must be in **RECEIVED**, **EVALUATED**, or **AWARDED** status.
+    - The supplier must already be linked to the RFQ.
+    - Sets `selected_supplier_id` and transitions status to **AWARDED**.
+    """
+    return await rfq_service.select_supplier(db, rfq_id, payload, current_user)
+
+
+# ============================================================================
+# Supplier quotations for an RFQ
+# ============================================================================
+
+@router.get(
+    "/{rfq_id}/quotations",
+    response_model=QuotationListResponse,
+    summary="List supplier quotations for an RFQ",
+)
+async def list_rfq_quotations(
+    rfq_id: uuid.UUID,
+    db: AsyncSession = Depends(get_db),
+    _current_user=Depends(get_current_user),
+):
+    """
+    Return all supplier quotations submitted for a given RFQ.
+    Each entry includes full supplier details.
+    """
+    return await supplier_quotation_service.list_quotations_for_rfq(db, rfq_id)

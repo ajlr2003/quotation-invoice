@@ -1,3 +1,4 @@
+import logging
 from datetime import datetime, timedelta, timezone
 from typing import Any, Optional
 
@@ -5,6 +6,8 @@ from jose import JWTError, jwt
 from passlib.context import CryptContext
 
 from app.config import settings
+
+logger = logging.getLogger(__name__)
 
 pwd_context = CryptContext(schemes=["bcrypt"], deprecated="auto")
 
@@ -49,6 +52,8 @@ def decode_token(token: str) -> Optional[str]:
     """Return the subject claim or None if the token is invalid/expired."""
     try:
         payload = jwt.decode(token, settings.SECRET_KEY, algorithms=[settings.ALGORITHM])
+        logger.debug("Token decoded OK — sub=%s exp=%s", payload.get("sub"), payload.get("exp"))
         return payload.get("sub")
-    except JWTError:
+    except JWTError as e:
+        logger.warning("Token rejected — %s: %s", type(e).__name__, e)
         return None
