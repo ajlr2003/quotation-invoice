@@ -130,3 +130,18 @@ async def get_total_revenue(db: AsyncSession) -> float:
         .where(SalesOrder.status == SalesOrderStatus.DELIVERED)
     )
     return float(result.scalar_one())
+
+
+async def get_top_products(db: AsyncSession, limit: int = 3) -> list[dict]:
+    result = await db.execute(
+        select(
+            SalesOrderItem.item_name.label("name"),
+            func.coalesce(func.sum(SalesOrderItem.total), 0).label("revenue"),
+        )
+        .join(SalesOrder, SalesOrderItem.order_id == SalesOrder.id)
+        .where(SalesOrderItem.item_name.isnot(None))
+        .group_by(SalesOrderItem.item_name)
+        .order_by(func.sum(SalesOrderItem.total).desc())
+        .limit(limit)
+    )
+    return [{"name": row.name, "revenue": float(row.revenue)} for row in result.all()]

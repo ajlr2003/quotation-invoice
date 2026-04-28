@@ -6,6 +6,7 @@ from app.database import get_db
 from app.middleware.auth import get_current_user
 from app.models.enums import SalesQuotationStatus
 from app.models.sales_order import SalesOrder
+from app.models.sales_order_item import SalesOrderItem
 from app.models.sales_quotation import SalesQuotation
 
 router = APIRouter()
@@ -48,8 +49,24 @@ async def sales_kpis(
 
     conversion_rate = round(converted_quotes / total_quotes * 100, 1) if total_quotes > 0 else 0.0
 
+    top_products_result = await db.execute(
+        select(
+            SalesOrderItem.item_name,
+            func.sum(SalesOrderItem.total).label("revenue"),
+        )
+        .where(SalesOrderItem.item_name.isnot(None))
+        .group_by(SalesOrderItem.item_name)
+        .order_by(func.sum(SalesOrderItem.total).desc())
+        .limit(5)
+    )
+    top_products = [
+        {"name": row.item_name, "revenue": float(row.revenue)}
+        for row in top_products_result.all()
+    ]
+
     return {
         "total_revenue": total_revenue,
         "active_quotes": active_quotes,
         "conversion_rate": conversion_rate,
+        "top_products": top_products,
     }

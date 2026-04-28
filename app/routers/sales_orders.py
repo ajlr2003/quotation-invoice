@@ -20,6 +20,15 @@ from pydantic import BaseModel
 class RevenueResponse(BaseModel):
     total_revenue: float
 
+
+class TopProductEntry(BaseModel):
+    name: str
+    revenue: float
+
+
+class TopProductsResponse(BaseModel):
+    top_products: list[TopProductEntry]
+
 router = APIRouter()
 
 
@@ -60,6 +69,19 @@ async def get_revenue(
 ):
     total = await sales_order_service.get_total_revenue(db)
     return RevenueResponse(total_revenue=total)
+
+
+@router.get(
+    "/top-products",
+    response_model=TopProductsResponse,
+    summary="Top 3 products by revenue across all sales orders",
+)
+async def get_top_products(
+    db: AsyncSession = Depends(get_db),
+    _current_user=Depends(get_current_user),
+):
+    products = await sales_order_service.get_top_products(db)
+    return TopProductsResponse(top_products=products)
 
 
 @router.get(
