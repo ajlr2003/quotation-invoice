@@ -78,9 +78,39 @@ class ApprovalEntityType(str, enum.Enum):
 
 class PurchaseOrderStatus(str, enum.Enum):
     CREATED     = "created"
+    PARTIAL     = "partial"      # some goods received, not yet complete
     SENT        = "sent"
     ACKNOWLEDGED= "acknowledged"
     COMPLETED   = "completed"
+    CANCELLED   = "cancelled"
+
+
+# ---------------------------------------------------------------------------
+# Purchase Invoice (supplier-side, created from GRN)
+# ---------------------------------------------------------------------------
+
+class PurchaseInvoiceStatus(str, enum.Enum):
+    DRAFT    = "draft"
+    APPROVED = "approved"
+    PAID     = "paid"
+
+
+# ---------------------------------------------------------------------------
+# Sales Quotation (sent TO customers, builder flow)
+# ---------------------------------------------------------------------------
+
+class SalesQuotationStatus(str, enum.Enum):
+    DRAFT     = "draft"
+    SENT      = "sent"
+    ACCEPTED  = "accepted"
+    REJECTED  = "rejected"
+    CONVERTED = "converted"
+
+
+class SalesOrderStatus(str, enum.Enum):
+    CONFIRMED   = "confirmed"
+    IN_PROGRESS = "in_progress"
+    DELIVERED   = "delivered"
     CANCELLED   = "cancelled"
 
 

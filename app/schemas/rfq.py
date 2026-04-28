@@ -164,6 +164,7 @@ class RFQSummaryResponse(BaseModel):
     deadline: Optional[date]
     created_by_id: uuid.UUID
     item_count: int = 0
+    selected_supplier_id: Optional[uuid.UUID] = None
     created_at: datetime
     updated_at: datetime
 

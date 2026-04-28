@@ -9,12 +9,7 @@ if config.config_file_name is not None:
     fileConfig(config.config_file_name)
 
 from app.database import Base
-from app.models import (
-    User, Customer, Supplier,
-    RFQ, RFQItem, SupplierQuote,
-    Quotation, QuotationItem,
-    Approval, Document,
-)
+import app.models  # noqa: F401 — registers ALL models in Base.metadata
 target_metadata = Base.metadata
 
 

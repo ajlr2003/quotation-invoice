@@ -5,7 +5,7 @@ One purchase order is created per awarded RFQ/supplier pair.
 import uuid
 from typing import TYPE_CHECKING
 
-from sqlalchemy import Enum, ForeignKey, String, UniqueConstraint
+from sqlalchemy import Enum, ForeignKey, Numeric, String, UniqueConstraint
 from sqlalchemy.orm import Mapped, mapped_column, relationship
 
 from app.database import Base
@@ -13,6 +13,7 @@ from app.models.base import AuditMixin
 from app.models.enums import PurchaseOrderStatus
 
 if TYPE_CHECKING:
+    from app.models.grn import GRN
     from app.models.rfq import RFQ
     from app.models.supplier import Supplier
 
@@ -38,6 +39,24 @@ class PurchaseOrder(AuditMixin, Base):
         ForeignKey("suppliers.id", ondelete="RESTRICT"), nullable=False, index=True
     )
 
+    # ── Quantity & pricing ────────────────────────────────────────────────
+    # ordered_quantity:  total units ordered (sum of RFQ items at PO creation)
+    # received_quantity: running total incremented each time a GRN is created
+    # unit_price:        quotation_total / ordered_quantity (per-unit cost)
+    # total_price:       snapshot of the full SupplierQuotation price at creation
+    ordered_quantity: Mapped[float] = mapped_column(
+        Numeric(14, 3), nullable=False, default=0, server_default="0"
+    )
+    received_quantity: Mapped[float] = mapped_column(
+        Numeric(14, 3), nullable=False, default=0, server_default="0"
+    )
+    unit_price: Mapped[float] = mapped_column(
+        Numeric(14, 2), nullable=False, default=0, server_default="0"
+    )
+    total_price: Mapped[float] = mapped_column(
+        Numeric(14, 2), nullable=False, default=0, server_default="0"
+    )
+
     # ── Status ────────────────────────────────────────────────────────────
     status: Mapped[PurchaseOrderStatus] = mapped_column(
         Enum(PurchaseOrderStatus, name="purchase_order_status"),
@@ -48,6 +67,7 @@ class PurchaseOrder(AuditMixin, Base):
     # ── Relationships ─────────────────────────────────────────────────────
     rfq: Mapped["RFQ"] = relationship("RFQ", back_populates="purchase_orders")
     supplier: Mapped["Supplier"] = relationship("Supplier", back_populates="purchase_orders")
+    grns: Mapped[list["GRN"]] = relationship("GRN", back_populates="purchase_order", cascade="all, delete-orphan")
 
     def __repr__(self) -> str:
         return (

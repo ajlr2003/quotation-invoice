@@ -12,11 +12,10 @@ from app.middleware.auth import get_current_user
 from app.schemas.supplier_quotation import QuotationCreate, QuotationResponse
 from app.services import supplier_quotation_service
 
-router = APIRouter(redirect_slashes=False)
-
+router = APIRouter()
 
 @router.post(
-    "/",
+    "",
     response_model=QuotationResponse,
     status_code=status.HTTP_201_CREATED,
     summary="Submit a supplier quotation for an RFQ",

@@ -16,7 +16,7 @@ from pydantic import BaseModel, Field
 class QuotationCreate(BaseModel):
     rfq_id: uuid.UUID
     supplier_id: uuid.UUID
-    price: float = Field(gt=0, description="Total quoted price (must be greater than zero)")
+    unit_price: float = Field(gt=0, description="Unit price per item (must be greater than zero)")
     notes: Optional[str] = None
 
 
@@ -38,7 +38,7 @@ class QuotationResponse(BaseModel):
     id: uuid.UUID
     rfq_id: uuid.UUID
     supplier_id: uuid.UUID
-    price: float
+    unit_price: float
     notes: Optional[str]
     supplier: SupplierSummary
     created_at: datetime

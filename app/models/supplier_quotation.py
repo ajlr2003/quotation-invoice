@@ -42,7 +42,7 @@ class SupplierQuotation(AuditMixin, Base):
     )
 
     # ── Quote details ─────────────────────────────────────────────────────
-    price: Mapped[float] = mapped_column(Numeric(14, 2), nullable=False)
+    unit_price: Mapped[float] = mapped_column(Numeric(14, 2), nullable=False)
     notes: Mapped[Optional[str]] = mapped_column(Text)
 
     # ── Relationships ─────────────────────────────────────────────────────
@@ -54,5 +54,5 @@ class SupplierQuotation(AuditMixin, Base):
     def __repr__(self) -> str:
         return (
             f"<SupplierQuotation id={self.id} rfq_id={self.rfq_id} "
-            f"supplier_id={self.supplier_id} price={self.price}>"
+            f"supplier_id={self.supplier_id} unit_price={self.unit_price}>"
         )

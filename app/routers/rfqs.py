@@ -45,7 +45,7 @@ router = APIRouter(redirect_slashes=False)
 # ============================================================================
 
 @router.post(
-    "/",
+    "",
     response_model=RFQResponse,
     status_code=status.HTTP_201_CREATED,
     summary="Create a new RFQ",
@@ -64,7 +64,7 @@ async def create_rfq(
 
 
 @router.get(
-    "/",
+    "",
     response_model=RFQListResponse,
     summary="List RFQs",
 )
@@ -250,6 +250,28 @@ async def select_supplier(
     - Sets `selected_supplier_id` and transitions status to **AWARDED**.
     """
     return await rfq_service.select_supplier(db, rfq_id, payload, current_user)
+
+
+@router.post(
+    "/{rfq_id}/auto-select",
+    response_model=RFQResponse,
+    summary="Auto-select best supplier by lowest price",
+)
+async def auto_select_supplier(
+    rfq_id: uuid.UUID,
+    db: AsyncSession = Depends(get_db),
+    current_user=Depends(get_current_user),
+):
+    """
+    Automatically award the RFQ to the supplier with the lowest submitted quotation price.
+
+    **Rules:**
+    - RFQ must be in **SENT**, **RECEIVED**, **EVALUATED**, or **AWARDED** status.
+    - At least one supplier quotation must exist.
+    - If a supplier is already selected, returns the current state unchanged.
+    - Sets `selected_supplier_id` and transitions status to **AWARDED**.
+    """
+    return await rfq_service.select_best_supplier(db, rfq_id, current_user)
 
 
 # ============================================================================

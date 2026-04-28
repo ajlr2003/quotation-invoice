@@ -26,6 +26,7 @@ from app.models.rfq import RFQ, rfq_suppliers
 from app.models.rfq_item import RFQItem
 from app.models.supplier import Supplier
 from app.models.user import User
+from app.models.supplier_quotation import SupplierQuotation
 from app.schemas.rfq import (
     RFQCreateRequest,
     RFQItemCreateRequest,
@@ -496,6 +497,62 @@ async def select_supplier(
 
     # Reload with all relationships — populate_existing forces SQLAlchemy to
     # re-fetch from DB even if the instance is already in the session identity map.
+    result = await db.execute(
+        select(RFQ)
+        .where(RFQ.id == rfq_id)
+        .options(
+            selectinload(RFQ.items),
+            selectinload(RFQ.created_by),
+            selectinload(RFQ.suppliers),
+            selectinload(RFQ.selected_supplier),
+        )
+        .execution_options(populate_existing=True)
+    )
+    rfq_full = result.scalar_one()
+    po = await _get_po_for_rfq(db, rfq_id)
+    return RFQResponse.from_orm_with_count(rfq_full, po)
+
+
+# ---------------------------------------------------------------------------
+# Auto-Select Supplier (lowest price from submitted quotations)
+# ---------------------------------------------------------------------------
+
+async def select_best_supplier(
+    db: AsyncSession,
+    rfq_id: uuid.UUID,
+    current_user: User,
+) -> RFQResponse:
+    rfq = await _get_rfq_or_404(db, rfq_id)
+
+    # Skip if a supplier is already selected
+    if rfq.selected_supplier_id is not None:
+        po = await _get_po_for_rfq(db, rfq_id)
+        return RFQResponse.from_orm_with_count(rfq, po)
+
+    if rfq.status in {RFQStatus.CLOSED, RFQStatus.CANCELLED}:
+        raise HTTPException(
+            status_code=status.HTTP_422_UNPROCESSABLE_ENTITY,
+            detail=f"Cannot auto-select supplier for RFQ in '{rfq.status}' status.",
+        )
+
+    result = await db.execute(
+        select(SupplierQuotation)
+        .where(SupplierQuotation.rfq_id == rfq_id)
+        .order_by(SupplierQuotation.unit_price.asc())
+    )
+    quotations = result.scalars().all()
+
+    if not quotations:
+        raise HTTPException(
+            status_code=status.HTTP_422_UNPROCESSABLE_ENTITY,
+            detail="No supplier quotations found for this RFQ. At least one quotation is required for auto-selection.",
+        )
+
+    winner = quotations[0]
+    rfq.selected_supplier_id = winner.supplier_id
+    rfq.status = RFQStatus.AWARDED
+    await db.flush()
+
     result = await db.execute(
         select(RFQ)
         .where(RFQ.id == rfq_id)

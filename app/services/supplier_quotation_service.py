@@ -96,7 +96,7 @@ async def submit_quotation(
     quotation = SupplierQuotation(
         rfq_id=payload.rfq_id,
         supplier_id=payload.supplier_id,
-        price=payload.price,
+        unit_price=payload.unit_price,
         notes=payload.notes,
     )
     db.add(quotation)

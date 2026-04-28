@@ -3,6 +3,7 @@ import logging
 logging.basicConfig(level=logging.DEBUG, format="%(levelname)s %(name)s — %(message)s")
 
 from contextlib import asynccontextmanager
+from typing import Callable
 
 from fastapi import FastAPI
 from fastapi.middleware.cors import CORSMiddleware
@@ -20,9 +21,28 @@ import app.models  # noqa: F401  — registers every model in Base.metadata
 # ---------------------------------------------------------------------------
 # Import routers (stubs — each will be expanded in subsequent tasks)
 # ---------------------------------------------------------------------------
-from app.routers import auth, users, clients, quotations, invoices, suppliers, rfqs, purchase_orders
+from app.routers import auth, users, clients, quotations, invoices, suppliers, rfqs, purchase_orders, grn, purchase_invoices, sales_quotations, sales_orders, dashboard
 
 logger = logging.getLogger(__name__)
+
+
+# ---------------------------------------------------------------------------
+# ASGI middleware — strip trailing slashes before routing so the frontend
+# can send /login/ or /login/ interchangeably without 307 redirects.
+# ---------------------------------------------------------------------------
+
+class _StripTrailingSlash:
+    """Normalise path by removing trailing slash (except bare '/') before routing."""
+
+    def __init__(self, app: Callable) -> None:
+        self.app = app
+
+    async def __call__(self, scope, receive, send) -> None:
+        if scope["type"] == "http":
+            path: str = scope.get("path", "")
+            if path != "/" and path.endswith("/"):
+                scope["path"] = path.rstrip("/")
+        await self.app(scope, receive, send)
 
 
 # ---------------------------------------------------------------------------
@@ -106,6 +126,7 @@ def create_application() -> FastAPI:
     app = FastAPI(
         title=settings.APP_NAME,
         version=settings.APP_VERSION,
+        redirect_slashes=False,
         description=(
             "REST API for Quotation-to-Invoice Workflow Automation. "
             "Handles quotation creation, approval, and conversion to invoices."
@@ -125,6 +146,9 @@ def create_application() -> FastAPI:
         allow_headers=["*"],
     )
 
+    # ── Trailing-slash normalisation ──────────────────────────────────────
+    app.add_middleware(_StripTrailingSlash)
+
     # ── Routers ──────────────────────────────────────────────────────────
     API_PREFIX = "/api/v1"
 
@@ -135,7 +159,12 @@ def create_application() -> FastAPI:
     app.include_router(rfqs.router,        prefix=f"{API_PREFIX}/rfqs",       tags=["RFQs"])
     app.include_router(quotations.router,       prefix=f"{API_PREFIX}/quotations",      tags=["Quotations"])
     app.include_router(purchase_orders.router,  prefix=f"{API_PREFIX}/purchase-orders", tags=["Purchase Orders"])
-    app.include_router(invoices.router,    prefix=f"{API_PREFIX}/invoices",   tags=["Invoices"])
+    app.include_router(grn.router,              prefix=f"{API_PREFIX}/grn",                      tags=["GRN"])
+    app.include_router(invoices.router,         prefix=f"{API_PREFIX}/invoices",                 tags=["Invoices"])
+    app.include_router(purchase_invoices.router,  prefix=f"{API_PREFIX}/purchase-invoices",        tags=["Purchase Invoices"])
+    app.include_router(sales_quotations.router,   prefix=f"{API_PREFIX}/sales/quotations",         tags=["Sales Quotations"])
+    app.include_router(sales_orders.router,       prefix=f"{API_PREFIX}/sales/orders",             tags=["Sales Orders"])
+    app.include_router(dashboard.router,          prefix=f"{API_PREFIX}/dashboard",                tags=["Dashboard"])
 
     # ── Root health-check ─────────────────────────────────────────────────
     @app.get("/", tags=["Health"], summary="Root health check")

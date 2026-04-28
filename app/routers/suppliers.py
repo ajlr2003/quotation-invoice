@@ -33,7 +33,7 @@ router = APIRouter()
 # ---------------------------------------------------------------------------
 
 @router.post(
-    "/",
+    "",
     response_model=SupplierResponse,
     status_code=status.HTTP_201_CREATED,
     summary="Create a new supplier",
@@ -52,7 +52,7 @@ async def create_supplier(
 # ---------------------------------------------------------------------------
 
 @router.get(
-    "/",
+    "",
     response_model=SupplierListResponse,
     summary="List suppliers",
 )
