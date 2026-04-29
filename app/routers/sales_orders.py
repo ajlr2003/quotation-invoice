@@ -29,6 +29,10 @@ class TopProductEntry(BaseModel):
 class TopProductsResponse(BaseModel):
     top_products: list[TopProductEntry]
 
+
+class StatusUpdateRequest(BaseModel):
+    status: str
+
 router = APIRouter()
 
 
@@ -82,6 +86,20 @@ async def get_top_products(
 ):
     products = await sales_order_service.get_top_products(db)
     return TopProductsResponse(top_products=products)
+
+
+@router.put(
+    "/{order_id}/status",
+    response_model=SalesOrderResponse,
+    summary="Advance sales order status: confirmed → shipped → delivered",
+)
+async def update_order_status(
+    order_id: uuid.UUID,
+    payload: StatusUpdateRequest,
+    db: AsyncSession = Depends(get_db),
+    _current_user=Depends(get_current_user),
+):
+    return await sales_order_service.update_order_status(db, order_id, payload.status)
 
 
 @router.get(

@@ -109,7 +109,7 @@ class SalesQuotationStatus(str, enum.Enum):
 
 class SalesOrderStatus(str, enum.Enum):
     CONFIRMED   = "confirmed"
-    IN_PROGRESS = "in_progress"
+    SHIPPED     = "shipped"
     DELIVERED   = "delivered"
     CANCELLED   = "cancelled"
 

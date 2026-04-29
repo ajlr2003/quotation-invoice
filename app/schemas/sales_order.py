@@ -52,3 +52,7 @@ class SalesOrderResponse(BaseModel):
 class SalesOrderListResponse(BaseModel):
     items: List[SalesOrderResponse]
     total: int
+
+
+class SalesOrderStatusUpdate(BaseModel):
+    status: str  # "confirmed" | "shipped" | "delivered"

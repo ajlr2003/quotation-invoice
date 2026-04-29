@@ -124,12 +124,70 @@ async def get_order(db: AsyncSession, order_id) -> SalesOrderResponse:
     return SalesOrderResponse.model_validate(o)
 
 
+_ALLOWED_TRANSITIONS: dict[SalesOrderStatus, SalesOrderStatus] = {
+    SalesOrderStatus.CONFIRMED: SalesOrderStatus.SHIPPED,
+    SalesOrderStatus.SHIPPED:   SalesOrderStatus.DELIVERED,
+}
+
+
+async def update_order_status(db: AsyncSession, order_id, new_status_str: str) -> SalesOrderResponse:
+    try:
+        new_status = SalesOrderStatus(new_status_str)
+    except ValueError:
+        raise HTTPException(
+            status_code=status.HTTP_400_BAD_REQUEST,
+            detail=f"Invalid status '{new_status_str}'. Must be one of: confirmed, shipped, delivered.",
+        )
+
+    o = await _load_order(db, order_id)
+    allowed_next = _ALLOWED_TRANSITIONS.get(o.status)
+
+    if allowed_next is None:
+        raise HTTPException(
+            status_code=status.HTTP_400_BAD_REQUEST,
+            detail=f"Order is already '{o.status.value}' — no further transitions allowed.",
+        )
+    if new_status != allowed_next:
+        raise HTTPException(
+            status_code=status.HTTP_400_BAD_REQUEST,
+            detail=f"Cannot transition from '{o.status.value}' to '{new_status.value}'. Expected next status: '{allowed_next.value}'.",
+        )
+
+    o.status = new_status
+    await db.flush()
+    return SalesOrderResponse.model_validate(o)
+
+
 async def get_total_revenue(db: AsyncSession) -> float:
     result = await db.execute(
         select(func.coalesce(func.sum(SalesOrder.total), 0))
         .where(SalesOrder.status == SalesOrderStatus.DELIVERED)
     )
     return float(result.scalar_one())
+
+
+_VALID_TRANSITIONS = {
+    SalesOrderStatus.CONFIRMED:   SalesOrderStatus.IN_PROGRESS,
+    SalesOrderStatus.IN_PROGRESS: SalesOrderStatus.DELIVERED,
+}
+
+
+async def update_status(db: AsyncSession, order_id, new_status: SalesOrderStatus) -> SalesOrderResponse:
+    o = await _load_order(db, order_id)
+    allowed = _VALID_TRANSITIONS.get(o.status)
+    if allowed is None or allowed != new_status:
+        raise HTTPException(
+            status_code=status.HTTP_400_BAD_REQUEST,
+            detail=f"Cannot transition from '{o.status.value}' to '{new_status.value}'",
+        )
+    o.status = new_status
+    await db.commit()
+    result = await db.execute(
+        select(SalesOrder)
+        .where(SalesOrder.id == o.id)
+        .options(selectinload(SalesOrder.items))
+    )
+    return SalesOrderResponse.model_validate(result.scalar_one())
 
 
 async def get_top_products(db: AsyncSession, limit: int = 3) -> list[dict]:
