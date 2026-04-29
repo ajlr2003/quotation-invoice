@@ -137,14 +137,14 @@ async def update_status(
 @router.put(
     "/{quote_id}/send",
     response_model=SalesQuotationResponse,
-    summary="Mark quotation as sent to client",
+    summary="Generate PDF and email quotation to client, then mark as sent",
 )
 async def send_quotation(
     quote_id: uuid.UUID,
     db: AsyncSession = Depends(get_db),
     _current_user=Depends(get_current_user),
 ):
-    return await sales_quotation_service.update_status(db, quote_id, "sent")
+    return await sales_quotation_service.send_quotation(db, quote_id)
 
 
 @router.put(

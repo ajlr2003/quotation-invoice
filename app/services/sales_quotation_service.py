@@ -1,4 +1,9 @@
+import asyncio
+import smtplib
 from datetime import date, datetime, timezone
+from email.mime.application import MIMEApplication
+from email.mime.multipart import MIMEMultipart
+from email.mime.text import MIMEText
 from io import BytesIO
 from typing import Optional
 
@@ -8,6 +13,7 @@ from sqlalchemy import func, select
 from sqlalchemy.ext.asyncio import AsyncSession
 from sqlalchemy.orm import selectinload
 
+from app.config import settings
 from app.models.enums import SalesOrderStatus, SalesQuotationStatus
 from app.models.sales_order import SalesOrder
 from app.models.sales_order_item import SalesOrderItem
@@ -258,6 +264,54 @@ async def update_status(db: AsyncSession, quote_id, new_status_str: str) -> Sale
     return await _to_response(db, q.id)
 
 
+async def send_quotation(db: AsyncSession, quote_id) -> SalesQuotationResponse:
+    """Generate PDF, email it to the client, then mark status = sent."""
+    q = await _load(db, quote_id)
+
+    allowed = _VALID_TRANSITIONS.get(q.status, set())
+    if SalesQuotationStatus.SENT not in allowed:
+        raise HTTPException(
+            status_code=status.HTTP_409_CONFLICT,
+            detail=f"Cannot send a quotation with status '{q.status.value}'",
+        )
+    if not q.email:
+        raise HTTPException(
+            status_code=status.HTTP_400_BAD_REQUEST,
+            detail="Quotation has no client email address. Please add one before sending.",
+        )
+
+    pdf_buf = _build_pdf(q)
+
+    try:
+        loop = asyncio.get_running_loop()
+        await loop.run_in_executor(None, _smtp_send, q, pdf_buf)
+    except smtplib.SMTPAuthenticationError:
+        raise HTTPException(
+            status_code=status.HTTP_502_BAD_GATEWAY,
+            detail="Email failed: SMTP authentication error. Check SMTP_USER and SMTP_PASS in .env.",
+        )
+    except smtplib.SMTPException as exc:
+        raise HTTPException(
+            status_code=status.HTTP_502_BAD_GATEWAY,
+            detail=f"Email failed: {exc}",
+        )
+    except RuntimeError as exc:
+        raise HTTPException(
+            status_code=status.HTTP_503_SERVICE_UNAVAILABLE,
+            detail=str(exc),
+        )
+    except Exception as exc:
+        raise HTTPException(
+            status_code=status.HTTP_502_BAD_GATEWAY,
+            detail=f"Email failed: {exc}",
+        )
+
+    q.status = SalesQuotationStatus.SENT
+    q.sent_at = datetime.now(timezone.utc)
+    await db.flush()
+    return await _to_response(db, q.id)
+
+
 async def convert_to_order(db: AsyncSession, quote_id) -> SalesOrderResponse:
     q = await _load(db, quote_id)
 
@@ -320,6 +374,53 @@ async def convert_to_order(db: AsyncSession, quote_id) -> SalesOrderResponse:
         .options(selectinload(SalesOrder.items))
     )
     return SalesOrderResponse.model_validate(result.scalar_one())
+
+
+def _smtp_send(q: SalesQuotation, pdf_buf: BytesIO) -> None:
+    """Blocking SMTP call — run in a thread via run_in_executor."""
+    host = settings.SMTP_HOST
+    port = settings.SMTP_PORT
+    user = settings.SMTP_USER
+    pw   = settings.SMTP_PASS
+
+    if not (host and user and pw):
+        raise RuntimeError(
+            "SMTP is not configured. Set SMTP_HOST, SMTP_USER, and SMTP_PASS in .env"
+        )
+
+    client_name = q.customer_name or q.contact_person or "Valued Client"
+
+    msg = MIMEMultipart()
+    msg["From"]    = user
+    msg["To"]      = q.email
+    msg["Subject"] = f"Quotation {q.quote_number}"
+
+    body = (
+        f"Dear {client_name},\n\n"
+        f"Please find attached quotation {q.quote_number}.\n\n"
+        f"Let us know if you have any questions.\n\n"
+        f"Best regards"
+    )
+    msg.attach(MIMEText(body, "plain"))
+
+    pdf_buf.seek(0)
+    attachment = MIMEApplication(pdf_buf.read(), _subtype="pdf")
+    attachment.add_header(
+        "Content-Disposition", "attachment", filename=f"{q.quote_number}.pdf"
+    )
+    msg.attach(attachment)
+
+    if port == 465:
+        with smtplib.SMTP_SSL(host, port, timeout=15) as server:
+            server.login(user, pw)
+            server.send_message(msg)
+    else:
+        with smtplib.SMTP(host, port, timeout=15) as server:
+            server.ehlo()
+            server.starttls()
+            server.ehlo()
+            server.login(user, pw)
+            server.send_message(msg)
 
 
 async def generate_pdf(db: AsyncSession, quote_id) -> StreamingResponse:
