@@ -1,0 +1,76 @@
+# =============================================================================
+# app/models/supplier.py
+# -----------------------------------------------------------------------------
+# ORM model for Supplier records — vendors that respond to RFQs with price
+# quotes. Suppliers can be linked to multiple RFQs, submit SupplierQuotations,
+# and be the recipient of Purchase Orders once an RFQ is awarded.
+# =============================================================================
+
+from __future__ import annotations
+
+from typing import TYPE_CHECKING, List, Optional
+
+from sqlalchemy import Boolean, String, Text
+from sqlalchemy.orm import Mapped, mapped_column, relationship
+
+from app.database import Base
+from app.models.base import AuditMixin
+
+if TYPE_CHECKING:
+    from app.models.supplier_quote import SupplierQuote
+    from app.models.supplier_quotation import SupplierQuotation
+    from app.models.purchase_order import PurchaseOrder
+
+
+class Supplier(AuditMixin, Base):
+    """Vendor that bids on RFQ line items via SupplierQuotes.
+
+    Table: ``suppliers``
+
+    Key relationships:
+    - ``quotes``              — per-item bids (``SupplierQuote``).
+    - ``supplier_quotations`` — whole-RFQ bids (``SupplierQuotation``).
+    - ``purchase_orders``     — POs issued to this supplier after award.
+    """
+
+    __tablename__ = "suppliers"
+
+    # ── Identity ──────────────────────────────────────────────────────────────
+    company_name: Mapped[str] = mapped_column(String(255), nullable=False, index=True)
+    contact_name: Mapped[Optional[str]] = mapped_column(String(255))
+    email: Mapped[str] = mapped_column(String(255), nullable=False, index=True)
+    phone: Mapped[Optional[str]] = mapped_column(String(50))
+
+    # ── Address ───────────────────────────────────────────────────────────────
+    address_line1: Mapped[Optional[str]] = mapped_column(String(255))
+    address_line2: Mapped[Optional[str]] = mapped_column(String(255))
+    city: Mapped[Optional[str]] = mapped_column(String(100))
+    state: Mapped[Optional[str]] = mapped_column(String(100))
+    postal_code: Mapped[Optional[str]] = mapped_column(String(20))
+    country: Mapped[Optional[str]] = mapped_column(String(100))
+
+    # ── Finance ───────────────────────────────────────────────────────────────
+    tax_id: Mapped[Optional[str]] = mapped_column(String(100))
+    payment_terms_days: Mapped[int] = mapped_column(default=30, nullable=False)
+    currency: Mapped[str] = mapped_column(String(3), default="USD", nullable=False)
+    bank_details: Mapped[Optional[str]] = mapped_column(Text)
+
+    # ── Evaluation ────────────────────────────────────────────────────────────
+    rating: Mapped[Optional[float]]        # 0.0 – 5.0 supplier rating
+    is_preferred: Mapped[bool] = mapped_column(Boolean, default=False, nullable=False)
+    is_active: Mapped[bool] = mapped_column(Boolean, default=True, nullable=False)
+    notes: Mapped[Optional[str]] = mapped_column(Text)
+
+    # ── Relationships ─────────────────────────────────────────────────────────
+    quotes: Mapped[List["SupplierQuote"]] = relationship(
+        "SupplierQuote", back_populates="supplier"
+    )
+    supplier_quotations: Mapped[List["SupplierQuotation"]] = relationship(
+        "SupplierQuotation", back_populates="supplier"
+    )
+    purchase_orders: Mapped[List["PurchaseOrder"]] = relationship(
+        "PurchaseOrder", back_populates="supplier"
+    )
+
+    def __repr__(self) -> str:
+        return f"<Supplier id={self.id} company={self.company_name}>"
