@@ -71,6 +71,16 @@ class Settings(BaseSettings):
     DEFAULT_PAGE_SIZE: int = 20
     MAX_PAGE_SIZE: int = 100
 
+    @field_validator("SMTP_PORT", mode="before")
+    @classmethod
+    def parse_smtp_port(cls, v: str | int) -> int:
+        """Coerce SMTP_PORT to int, falling back to 587 when empty or missing."""
+        if isinstance(v, int):
+            return v
+        if not str(v).strip():
+            return 587
+        return int(v)
+
     @field_validator("ALLOWED_ORIGINS", mode="before")
     @classmethod
     def parse_origins(cls, v: str | list) -> list:
