@@ -207,7 +207,7 @@ def create_application() -> FastAPI:
     app = FastAPI(
         title=settings.APP_NAME,
         version=settings.APP_VERSION,
-        redirect_slashes=False,
+        redirect_slashes=True,
         description=(
             "REST API for Quotation-to-Invoice Workflow Automation. "
             "Handles quotation creation, approval, and conversion to invoices."
