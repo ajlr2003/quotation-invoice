@@ -44,7 +44,7 @@ async def send_email_with_pdf(
     if settings.RESEND_API_KEY:
         await _send_via_resend(
             api_key=settings.RESEND_API_KEY,
-            from_addr=f"Kytos Arabia <{settings.SMTP_USER or 'noreply@kytos.com'}>",
+            from_addr=f"Kytos Arabia <{settings.RESEND_FROM_EMAIL}>",
             to_addr=to_addr,
             subject=subject,
             body=body,
