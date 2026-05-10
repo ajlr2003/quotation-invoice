@@ -47,7 +47,10 @@ class Settings(BaseSettings):
     # JSON array string accepted when set via environment variable
     ALLOWED_ORIGINS: List[str] = ["http://localhost:3000", "http://localhost:5173"]
 
-    # ── SMTP (outbound email) ─────────────────────────────────────────────────
+    # ── Email delivery ────────────────────────────────────────────────────────
+    # Resend (HTTP API) is preferred — works on Render free tier.
+    # SMTP is used as fallback when RESEND_API_KEY is not set.
+    RESEND_API_KEY: str = ""
     SMTP_HOST: str = ""
     SMTP_PORT: int = 587                     # 587 = STARTTLS, 465 = SSL/TLS
     SMTP_USER: str = ""
