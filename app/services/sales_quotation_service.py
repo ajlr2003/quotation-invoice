@@ -4,18 +4,13 @@
 # Business logic for the Sales Quotation lifecycle: create, list, get, update,
 # status transitions, email delivery, PDF generation, and conversion to a
 # SalesOrder. All database writes use SQLAlchemy async sessions; PDF rendering
-# is handled by ReportLab and email delivery is offloaded to a thread executor
-# so neither operation blocks the asyncio event loop.
+# is handled by ReportLab and email delivery delegates to app.utils.email
+# (Resend HTTP API primary, SMTP fallback).
 # =============================================================================
 
 from __future__ import annotations
 
-import asyncio
-import smtplib
 from datetime import date, datetime, timezone
-from email.mime.application import MIMEApplication
-from email.mime.multipart import MIMEMultipart
-from email.mime.text import MIMEText
 from io import BytesIO
 from typing import Optional
 
@@ -27,6 +22,7 @@ from sqlalchemy.orm import selectinload
 
 from app.config import settings
 from app.models.enums import SalesOrderStatus, SalesQuotationStatus
+from app.utils.email import send_email_with_pdf
 from app.models.sales_order import SalesOrder
 from app.models.sales_order_item import SalesOrderItem
 from app.models.sales_quotation import SalesQuotation
@@ -478,10 +474,8 @@ async def send_quotation(
 ) -> SalesQuotationResponse:
     """Generate a PDF, email it to the client, then mark the quotation as SENT.
 
-    Email is sent synchronously in a thread executor to avoid blocking the
-    event loop.  The status is only persisted if the email succeeds — if the
-    SMTP call raises, the status remains DRAFT and the exception is surfaced
-    as an HTTP 502/503.
+    The status is only persisted if the email succeeds — if delivery raises,
+    the status remains DRAFT and the exception is surfaced as an HTTP 502.
 
     Args:
         db:       Active async database session.
@@ -494,8 +488,7 @@ async def send_quotation(
     Raises:
         HTTPException: 409 if the quotation is not in a sendable state.
         HTTPException: 400 if the quotation has no valid client email address.
-        HTTPException: 502 on SMTP authentication failure or other SMTP error.
-        HTTPException: 503 if SMTP is not configured.
+        HTTPException: 502 on email delivery failure.
     """
     q = await _load(db, quote_id)
 
@@ -522,24 +515,17 @@ async def send_quotation(
 
     pdf_buf = _build_pdf(q)
 
-    # ── Offload blocking SMTP call to thread executor ─────────────────────────
     try:
-        loop = asyncio.get_running_loop()
-        await loop.run_in_executor(None, _smtp_send, q, pdf_buf)
-    except smtplib.SMTPAuthenticationError:
-        raise HTTPException(
-            status_code=status.HTTP_502_BAD_GATEWAY,
-            detail="Email failed: SMTP authentication error. Check SMTP_USER and SMTP_PASS in .env.",
-        )
-    except smtplib.SMTPException as exc:
-        raise HTTPException(
-            status_code=status.HTTP_502_BAD_GATEWAY,
-            detail=f"Email failed: {exc}",
-        )
-    except RuntimeError as exc:
-        raise HTTPException(
-            status_code=status.HTTP_503_SERVICE_UNAVAILABLE,
-            detail=str(exc),
+        await send_email_with_pdf(
+            to_addr=q.email,
+            subject=f"Quotation {q.quote_number} — {q.subject or 'Sales Quotation'}",
+            body=(
+                f"Dear {q.contact_person or q.customer_name or 'Valued Client'},\n\n"
+                f"Please find attached quotation {q.quote_number}.\n\n"
+                f"Best regards,\n{settings.COMPANY_NAME}"
+            ),
+            pdf_bytes=pdf_buf.getvalue(),
+            pdf_filename=f"{q.quote_number}.pdf",
         )
     except Exception as exc:
         raise HTTPException(
@@ -649,131 +635,6 @@ async def convert_to_order(
         .options(selectinload(SalesOrder.items))
     )
     return SalesOrderResponse.model_validate(result.scalar_one())
-
-
-# ── SMTP helper (blocking — must run in a thread executor) ────────────────────
-
-def _smtp_send(q: SalesQuotation, pdf_buf: BytesIO) -> None:
-    """Build and send the quotation email with a PDF attachment (blocking).
-
-    Supports both STARTTLS (port != 465) and implicit SSL (port 465).
-    This function must **not** be called directly from an async context;
-    always wrap it with ``loop.run_in_executor``.
-
-    Args:
-        q:       The ``SalesQuotation`` ORM object (provides recipient address,
-                 quote number, totals, etc.).
-        pdf_buf: In-memory buffer containing the rendered PDF bytes.
-
-    Raises:
-        RuntimeError: If SMTP credentials are not configured in settings.
-        smtplib.SMTPAuthenticationError: On login failure.
-        smtplib.SMTPException: On any other SMTP-level error.
-    """
-    host = settings.SMTP_HOST
-    port = settings.SMTP_PORT
-    user = settings.SMTP_USER
-    pw   = settings.SMTP_PASS
-
-    if not (host and user and pw):
-        raise RuntimeError(
-            "SMTP is not configured. Set SMTP_HOST, SMTP_USER, and SMTP_PASS in .env"
-        )
-
-    # ── Build display values ──────────────────────────────────────────────────
-    client_name   = q.customer_name or q.contact_person or "Valued Client"
-    contact_name  = q.contact_person or client_name
-    currency      = q.currency or "SAR"
-    total_fmt     = f"{currency} {float(q.total or 0):,.2f}"
-    validity_line = f"This quotation is valid for {q.validity} days." if q.validity else ""
-    subject_line  = q.subject or "Sales Quotation"
-
-    # ── Build multipart MIME message ──────────────────────────────────────────
-    msg = MIMEMultipart("alternative")
-    msg["From"]    = f"Kytos Smart Management <{user}>"
-    msg["To"]      = q.email
-    msg["Subject"] = f"Quotation {q.quote_number} — {subject_line}"
-
-    plain = (
-        f"Dear {contact_name},\n\n"
-        f"Thank you for your interest. Please find attached quotation "
-        f"{q.quote_number} prepared for {client_name}.\n\n"
-        f"  Quote No : {q.quote_number}\n"
-        f"  Total    : {total_fmt}\n"
-        f"  Subject  : {subject_line}\n"
-        + (f"  Valid for: {q.validity} days\n" if q.validity else "")
-        + f"\nTo accept or discuss this quotation, simply reply to this email "
-        f"or contact us directly.\n\n"
-        f"Best regards,\n"
-        f"Kytos Smart Management\n"
-    )
-    html = f"""<!DOCTYPE html>
-<html>
-<body style="margin:0;padding:0;background:#f3f4f6;font-family:Arial,sans-serif;">
-  <table width="100%" cellpadding="0" cellspacing="0" style="background:#f3f4f6;padding:32px 0;">
-    <tr><td align="center">
-      <table width="560" cellpadding="0" cellspacing="0" style="background:#ffffff;border-radius:8px;overflow:hidden;box-shadow:0 2px 8px rgba(0,0,0,.08);">
-        <tr><td style="background:#7c3aed;padding:28px 36px;">
-          <span style="color:#ffffff;font-size:22px;font-weight:700;letter-spacing:.5px;">KYTOS</span>
-          <span style="color:#c4b5fd;font-size:13px;margin-left:10px;">Smart Management</span>
-        </td></tr>
-        <tr><td style="padding:32px 36px;">
-          <p style="margin:0 0 8px;color:#374151;font-size:15px;">Dear <strong>{contact_name}</strong>,</p>
-          <p style="margin:0 0 20px;color:#6b7280;font-size:14px;line-height:1.6;">
-            Thank you for your interest. Please find attached quotation
-            <strong>{q.quote_number}</strong> prepared for <strong>{client_name}</strong>.
-          </p>
-          <table width="100%" cellpadding="0" cellspacing="0" style="background:#f9fafb;border-radius:6px;padding:16px 20px;margin-bottom:24px;">
-            <tr><td style="padding:4px 0;color:#6b7280;font-size:13px;">Quote No</td>
-                <td style="padding:4px 0;color:#111827;font-size:13px;font-weight:600;text-align:right;">{q.quote_number}</td></tr>
-            <tr><td style="padding:4px 0;color:#6b7280;font-size:13px;">Subject</td>
-                <td style="padding:4px 0;color:#111827;font-size:13px;text-align:right;">{subject_line}</td></tr>
-            <tr><td style="padding:8px 0 4px;color:#111827;font-size:15px;font-weight:700;border-top:1px solid #e5e7eb;">Total</td>
-                <td style="padding:8px 0 4px;color:#7c3aed;font-size:18px;font-weight:700;text-align:right;border-top:1px solid #e5e7eb;">{total_fmt}</td></tr>
-          </table>
-          {f'<p style="margin:0 0 20px;color:#6b7280;font-size:13px;">{validity_line}</p>' if validity_line else ''}
-          <p style="margin:0 0 24px;color:#6b7280;font-size:14px;line-height:1.6;">
-            To accept or discuss this quotation, simply reply to this email or contact us directly.
-          </p>
-          <p style="margin:0;color:#9ca3af;font-size:12px;">
-            Best regards,<br><strong style="color:#374151;">Kytos Smart Management</strong>
-          </p>
-        </td></tr>
-        <tr><td style="background:#f9fafb;padding:16px 36px;border-top:1px solid #e5e7eb;">
-          <p style="margin:0;color:#9ca3af;font-size:11px;text-align:center;">
-            This email was sent automatically. Please do not share this quotation outside your organisation.
-          </p>
-        </td></tr>
-      </table>
-    </td></tr>
-  </table>
-</body>
-</html>"""
-    msg.attach(MIMEText(plain, "plain"))
-    msg.attach(MIMEText(html, "html"))
-
-    # ── Attach the PDF ────────────────────────────────────────────────────────
-    pdf_buf.seek(0)
-    attachment = MIMEApplication(pdf_buf.read(), _subtype="pdf")
-    attachment.add_header(
-        "Content-Disposition", "attachment", filename=f"{q.quote_number}.pdf"
-    )
-    msg.attach(attachment)
-
-    # ── Deliver — choose SSL/TLS vs STARTTLS based on port ────────────────────
-    if port == 465:
-        # Implicit SSL/TLS (no STARTTLS upgrade needed)
-        with smtplib.SMTP_SSL(host, port, timeout=15) as server:
-            server.login(user, pw)
-            server.send_message(msg)
-    else:
-        # STARTTLS upgrade (port 587 default)
-        with smtplib.SMTP(host, port, timeout=15) as server:
-            server.ehlo()
-            server.starttls()
-            server.ehlo()
-            server.login(user, pw)
-            server.send_message(msg)
 
 
 async def generate_pdf(db: AsyncSession, quote_id) -> StreamingResponse:
