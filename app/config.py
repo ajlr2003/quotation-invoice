@@ -51,10 +51,11 @@ class Settings(BaseSettings):
     # Resend (HTTP API) is preferred — works on Render free tier.
     # SMTP is used as fallback when RESEND_API_KEY is not set.
     RESEND_API_KEY: str = ""
-    # "From" address used when sending via Resend. Must be a domain verified on
-    # resend.com/domains. Defaults to Resend's shared onboarding sender which
-    # works on all accounts without domain setup (testing / free tier).
     RESEND_FROM_EMAIL: str = "onboarding@resend.dev"
+    # SendGrid HTTP API — preferred when SENDGRID_API_KEY is set.
+    # Requires only Single Sender Verification (no domain ownership needed).
+    SENDGRID_API_KEY: str = ""
+    SENDGRID_FROM_EMAIL: str = ""
     SMTP_HOST: str = ""
     SMTP_PORT: int = 587                     # 587 = STARTTLS, 465 = SSL/TLS
     SMTP_USER: str = ""

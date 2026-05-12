@@ -2,8 +2,8 @@
 # app/utils/email.py
 # -----------------------------------------------------------------------------
 # Async email helper that sends transactional email with a PDF attachment.
-# Uses the Resend HTTP API (resend.com) which works on Render's free tier.
-# Falls back to SMTP if RESEND_API_KEY is not set.
+# Priority: SendGrid HTTP API → Resend HTTP API → SMTP (fallback).
+# Both SendGrid and Resend work on Render's free tier (no SMTP ports needed).
 # =============================================================================
 
 from __future__ import annotations
@@ -26,8 +26,7 @@ async def send_email_with_pdf(
 ) -> None:
     """Send an email with a PDF attachment.
 
-    Prefers Resend HTTP API when RESEND_API_KEY is configured (works on
-    Render free tier). Falls back to SMTP when only SMTP credentials are set.
+    Tries SendGrid first, then Resend, then SMTP.
 
     Args:
         to_addr:      Recipient email address.
@@ -37,11 +36,21 @@ async def send_email_with_pdf(
         pdf_filename: Filename shown to the recipient in their email client.
 
     Raises:
-        RuntimeError: If neither Resend nor SMTP is configured.
+        RuntimeError: If no email provider is configured.
     """
     from app.config import settings
 
-    if settings.RESEND_API_KEY:
+    if settings.SENDGRID_API_KEY and settings.SENDGRID_FROM_EMAIL:
+        await _send_via_sendgrid(
+            api_key=settings.SENDGRID_API_KEY,
+            from_addr=settings.SENDGRID_FROM_EMAIL,
+            to_addr=to_addr,
+            subject=subject,
+            body=body,
+            pdf_bytes=pdf_bytes,
+            pdf_filename=pdf_filename,
+        )
+    elif settings.RESEND_API_KEY:
         await _send_via_resend(
             api_key=settings.RESEND_API_KEY,
             from_addr=f"Kytos Arabia <{settings.RESEND_FROM_EMAIL}>",
@@ -68,8 +77,47 @@ async def send_email_with_pdf(
         )
     else:
         raise RuntimeError(
-            "Email not configured — set RESEND_API_KEY or SMTP_HOST/USER/PASS in .env"
+            "Email not configured — set SENDGRID_API_KEY or RESEND_API_KEY in environment"
         )
+
+
+async def _send_via_sendgrid(
+    api_key: str,
+    from_addr: str,
+    to_addr: str,
+    subject: str,
+    body: str,
+    pdf_bytes: bytes,
+    pdf_filename: str,
+) -> None:
+    """Send via SendGrid HTTP API (works on Render free tier)."""
+    import httpx
+
+    pdf_b64 = base64.b64encode(pdf_bytes).decode()
+
+    payload = {
+        "personalizations": [{"to": [{"email": to_addr}]}],
+        "from": {"email": from_addr, "name": "Kytos Arabia"},
+        "subject": subject,
+        "content": [{"type": "text/plain", "value": body}],
+        "attachments": [
+            {
+                "content": pdf_b64,
+                "type": "application/pdf",
+                "filename": pdf_filename,
+            }
+        ],
+    }
+
+    async with httpx.AsyncClient(timeout=30) as client:
+        res = await client.post(
+            "https://api.sendgrid.com/v3/mail/send",
+            headers={"Authorization": f"Bearer {api_key}"},
+            json=payload,
+        )
+        # SendGrid returns 202 Accepted on success
+        if res.status_code not in (200, 201, 202):
+            raise RuntimeError(f"SendGrid API error {res.status_code}: {res.text}")
 
 
 async def _send_via_resend(
