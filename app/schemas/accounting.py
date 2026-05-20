@@ -19,21 +19,15 @@ from app.models.journal_entry import JournalEntryStatus
 
 # ── KPI ───────────────────────────────────────────────────────────────────────
 
-class KpiChange(BaseModel):
-    value: float
-    label: str
-    direction: str   # "up" | "down"
-
-
 class AccountingKPIResponse(BaseModel):
-    cash_balance: float
-    cash_change: KpiChange
-    accounts_receivable: float
-    ar_change: KpiChange
-    accounts_payable: float
-    ap_change: KpiChange
-    net_profit_ytd: float
-    profit_change: KpiChange
+    total_accounts: int
+    active_accounts: int
+    entries_this_month: int
+    entries_total: int
+    total_debits_posted: float
+    total_credits_posted: float
+    draft_entries: int
+    posted_entries: int
 
 
 # ── Chart of Accounts ─────────────────────────────────────────────────────────

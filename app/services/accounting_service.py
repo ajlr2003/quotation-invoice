@@ -16,10 +16,7 @@ from sqlalchemy import func, select
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from app.models.account import Account, AccountType
-from app.models.enums import PurchaseInvoiceStatus, SalesOrderStatus
 from app.models.journal_entry import JournalEntry, JournalEntryStatus
-from app.models.purchase_invoice import PurchaseInvoice
-from app.models.sales_order import SalesOrder
 from app.schemas.accounting import (
     AccountCreate,
     AccountingKPIResponse,
@@ -28,7 +25,6 @@ from app.schemas.accounting import (
     JournalEntryCreate,
     JournalEntryListResponse,
     JournalEntryResponse,
-    KpiChange,
 )
 
 
@@ -58,127 +54,59 @@ async def seed_default_accounts(db: AsyncSession) -> None:
     await db.commit()
 
 
-# ── KPI helpers ───────────────────────────────────────────────────────────────
-
-def _change(current: float, previous: float, label_suffix: str, lower_is_better: bool = False) -> KpiChange:
-    if previous == 0:
-        pct = 0.0
-        direction = "up"
-    else:
-        pct = round((current - previous) / abs(previous) * 100, 1)
-        direction = "up" if pct >= 0 else "down"
-    if lower_is_better:
-        direction = "down" if pct >= 0 else "up"
-    sign = "+" if pct >= 0 else ""
-    return KpiChange(value=abs(pct), label=f"{sign}{pct}% {label_suffix}", direction=direction)
-
+# ── KPI ───────────────────────────────────────────────────────────────────────
 
 async def get_kpis(db: AsyncSession) -> AccountingKPIResponse:
-    """Derive KPIs from existing sales orders and purchase invoices."""
+    """KPIs derived purely from the chart of accounts and journal entries."""
     now = datetime.now(timezone.utc)
-    this_year  = now.year
-    this_month = now.month
-    prev_month = this_month - 1 if this_month > 1 else 12
-    prev_year  = this_year if this_month > 1 else this_year - 1
 
-    # ── Accounts Receivable: confirmed/shipped sales orders ──────────────────
-    ar_statuses = [SalesOrderStatus.CONFIRMED, SalesOrderStatus.SHIPPED]
+    total_accounts  = (await db.execute(select(func.count()).select_from(Account))).scalar_one()
+    active_accounts = (await db.execute(
+        select(func.count()).select_from(Account).where(Account.is_active == True)
+    )).scalar_one()
 
-    ar_curr = (await db.execute(
-        select(func.coalesce(func.sum(SalesOrder.total), 0)).where(
-            SalesOrder.status.in_(ar_statuses),
-            func.extract("year",  SalesOrder.created_at) == this_year,
-            func.extract("month", SalesOrder.created_at) == this_month,
+    entries_total = (await db.execute(select(func.count()).select_from(JournalEntry))).scalar_one()
+
+    entries_this_month = (await db.execute(
+        select(func.count()).select_from(JournalEntry).where(
+            func.extract("year",  JournalEntry.created_at) == now.year,
+            func.extract("month", JournalEntry.created_at) == now.month,
         )
     )).scalar_one()
 
-    ar_prev = (await db.execute(
-        select(func.coalesce(func.sum(SalesOrder.total), 0)).where(
-            SalesOrder.status.in_(ar_statuses),
-            func.extract("year",  SalesOrder.created_at) == prev_year,
-            func.extract("month", SalesOrder.created_at) == prev_month,
+    draft_entries = (await db.execute(
+        select(func.count()).select_from(JournalEntry).where(
+            JournalEntry.status == JournalEntryStatus.DRAFT
         )
     )).scalar_one()
 
-    ar_total = (await db.execute(
-        select(func.coalesce(func.sum(SalesOrder.total), 0)).where(
-            SalesOrder.status.in_(ar_statuses)
+    posted_entries = (await db.execute(
+        select(func.count()).select_from(JournalEntry).where(
+            JournalEntry.status == JournalEntryStatus.POSTED
         )
     )).scalar_one()
 
-    # ── Accounts Payable: approved (unpaid) purchase invoices ─────────────────
-    ap_total = (await db.execute(
-        select(func.coalesce(func.sum(PurchaseInvoice.total_amount), 0)).where(
-            PurchaseInvoice.status == PurchaseInvoiceStatus.APPROVED
+    total_debits_posted = (await db.execute(
+        select(func.coalesce(func.sum(JournalEntry.debit_amount), 0)).where(
+            JournalEntry.status == JournalEntryStatus.POSTED
         )
     )).scalar_one()
 
-    ap_curr = (await db.execute(
-        select(func.coalesce(func.sum(PurchaseInvoice.total_amount), 0)).where(
-            PurchaseInvoice.status == PurchaseInvoiceStatus.APPROVED,
-            func.extract("year",  PurchaseInvoice.created_at) == this_year,
-            func.extract("month", PurchaseInvoice.created_at) == this_month,
+    total_credits_posted = (await db.execute(
+        select(func.coalesce(func.sum(JournalEntry.credit_amount), 0)).where(
+            JournalEntry.status == JournalEntryStatus.POSTED
         )
     )).scalar_one()
-
-    ap_prev = (await db.execute(
-        select(func.coalesce(func.sum(PurchaseInvoice.total_amount), 0)).where(
-            PurchaseInvoice.status == PurchaseInvoiceStatus.APPROVED,
-            func.extract("year",  PurchaseInvoice.created_at) == prev_year,
-            func.extract("month", PurchaseInvoice.created_at) == prev_month,
-        )
-    )).scalar_one()
-
-    # ── Revenue YTD: all sales orders this year ───────────────────────────────
-    revenue_ytd = (await db.execute(
-        select(func.coalesce(func.sum(SalesOrder.total), 0)).where(
-            func.extract("year", SalesOrder.created_at) == this_year
-        )
-    )).scalar_one()
-
-    revenue_last_year = (await db.execute(
-        select(func.coalesce(func.sum(SalesOrder.total), 0)).where(
-            func.extract("year", SalesOrder.created_at) == this_year - 1
-        )
-    )).scalar_one()
-
-    # ── Expenses YTD: all purchase invoices this year ─────────────────────────
-    expenses_ytd = (await db.execute(
-        select(func.coalesce(func.sum(PurchaseInvoice.total_amount), 0)).where(
-            func.extract("year", PurchaseInvoice.created_at) == this_year
-        )
-    )).scalar_one()
-
-    net_profit_ytd     = float(revenue_ytd) - float(expenses_ytd)
-    net_profit_last_yr = float(revenue_last_year) - float(expenses_ytd) * 0.9  # estimate
-
-    # ── Cash Balance: revenue delivered - expenses paid ───────────────────────
-    revenue_delivered = (await db.execute(
-        select(func.coalesce(func.sum(SalesOrder.total), 0)).where(
-            SalesOrder.status == SalesOrderStatus.DELIVERED
-        )
-    )).scalar_one()
-
-    expenses_paid = (await db.execute(
-        select(func.coalesce(func.sum(PurchaseInvoice.total_amount), 0)).where(
-            PurchaseInvoice.status == PurchaseInvoiceStatus.PAID
-        )
-    )).scalar_one()
-
-    cash_balance = float(revenue_delivered) - float(expenses_paid)
-
-    # prev month cash proxy
-    cash_prev = cash_balance * 0.875  # fallback estimate if no prev data
 
     return AccountingKPIResponse(
-        cash_balance=round(cash_balance, 2),
-        cash_change=_change(cash_balance, cash_prev, "from last month"),
-        accounts_receivable=round(float(ar_total), 2),
-        ar_change=_change(float(ar_curr), float(ar_prev), "from last month"),
-        accounts_payable=round(float(ap_total), 2),
-        ap_change=_change(float(ap_curr), float(ap_prev), "from last month", lower_is_better=True),
-        net_profit_ytd=round(net_profit_ytd, 2),
-        profit_change=_change(net_profit_ytd, net_profit_last_yr, "from last year"),
+        total_accounts=total_accounts,
+        active_accounts=active_accounts,
+        entries_this_month=entries_this_month,
+        entries_total=entries_total,
+        total_debits_posted=round(float(total_debits_posted), 2),
+        total_credits_posted=round(float(total_credits_posted), 2),
+        draft_entries=draft_entries,
+        posted_entries=posted_entries,
     )
 
 
