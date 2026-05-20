@@ -21,6 +21,8 @@ from app.models.enums import (
     UserRole,
 )
 
+from app.models.account import Account, AccountType
+from app.models.journal_entry import JournalEntry, JournalEntryStatus
 from app.models.user import User
 from app.models.customer import Customer
 from app.models.supplier import Supplier
@@ -60,4 +62,8 @@ __all__ = [
     "SalesQuotationItem",
     "SalesOrder",
     "SalesOrderItem",
+    "Account",
+    "AccountType",
+    "JournalEntry",
+    "JournalEntryStatus",
 ]

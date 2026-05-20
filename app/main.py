@@ -39,7 +39,7 @@ import app.models  # noqa: F401
 from app.routers import (
     auth, users, clients, quotations, invoices, suppliers, rfqs,
     purchase_orders, grn, purchase_invoices, sales_quotations, sales_orders,
-    dashboard,
+    dashboard, accounting,
 )
 
 logger = logging.getLogger(__name__)
@@ -183,6 +183,9 @@ async def lifespan(app: FastAPI):
     await init_db()
     await _seed_test_user()
     await _seed_suppliers()
+    from app.services.accounting_service import seed_default_accounts
+    async with AsyncSessionLocal() as session:
+        await seed_default_accounts(session)
     yield
     # ── Shutdown ──────────────────────────────────────────────────────────────
     print("🛑  Shutting down — closing DB pool")
@@ -244,6 +247,7 @@ def create_application() -> FastAPI:
     app.include_router(sales_quotations.router,   prefix=f"{API_PREFIX}/sales/quotations",  tags=["Sales Quotations"])
     app.include_router(sales_orders.router,       prefix=f"{API_PREFIX}/sales/orders",      tags=["Sales Orders"])
     app.include_router(dashboard.router,          prefix=f"{API_PREFIX}/dashboard",         tags=["Dashboard"])
+    app.include_router(accounting.router,         prefix=f"{API_PREFIX}/accounting",        tags=["Accounting"])
 
     # ── Health-check endpoints ────────────────────────────────────────────────
 
