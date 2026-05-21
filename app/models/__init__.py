@@ -23,6 +23,9 @@ from app.models.enums import (
 
 from app.models.account import Account, AccountType
 from app.models.journal_entry import JournalEntry, JournalEntryStatus
+from app.models.bank_account import BankAccount, BankAccountType
+from app.models.bank_transaction import BankTransaction
+from app.models.closed_period import ClosedPeriod
 from app.models.user import User
 from app.models.customer import Customer
 from app.models.supplier import Supplier
@@ -62,8 +65,9 @@ __all__ = [
     "SalesQuotationItem",
     "SalesOrder",
     "SalesOrderItem",
-    "Account",
-    "AccountType",
-    "JournalEntry",
-    "JournalEntryStatus",
+    "Account", "AccountType",
+    "JournalEntry", "JournalEntryStatus",
+    "BankAccount", "BankAccountType",
+    "BankTransaction",
+    "ClosedPeriod",
 ]
