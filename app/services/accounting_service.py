@@ -73,6 +73,11 @@ _DEFAULT_BANK_ACCOUNTS = [
 
 
 async def seed_default_accounts(db: AsyncSession) -> None:
+    """Seed chart of accounts and bank accounts on first startup.
+
+    Runs only when the respective tables are empty, making it safe to call
+    on every application start without duplicating records.
+    """
     count = (await db.execute(select(func.count()).select_from(Account))).scalar_one()
     if count == 0:
         for code, name, atype, desc in _DEFAULT_ACCOUNTS:
@@ -89,6 +94,11 @@ async def seed_default_accounts(db: AsyncSession) -> None:
 # ── KPI ───────────────────────────────────────────────────────────────────────
 
 async def get_kpis(db: AsyncSession) -> AccountingKPIResponse:
+    """Compute and return the accounting dashboard KPI snapshot.
+
+    Executes 8 aggregation queries in sequence to produce counts and sums
+    that power the 4 KPI cards on the frontend dashboard.
+    """
     now = datetime.now(timezone.utc)
 
     total_accounts  = (await db.execute(select(func.count()).select_from(Account))).scalar_one()
@@ -134,6 +144,7 @@ async def get_kpis(db: AsyncSession) -> AccountingKPIResponse:
 # ── Chart of Accounts ─────────────────────────────────────────────────────────
 
 async def list_accounts(db: AsyncSession) -> AccountListResponse:
+    """Return all accounts ordered by account code ascending."""
     rows = (await db.execute(select(Account).order_by(Account.code))).scalars().all()
     return AccountListResponse(
         items=[AccountResponse.model_validate(r) for r in rows],
@@ -142,6 +153,11 @@ async def list_accounts(db: AsyncSession) -> AccountListResponse:
 
 
 async def create_account(db: AsyncSession, payload: AccountCreate) -> AccountResponse:
+    """Create a new account in the chart of accounts.
+
+    Raises:
+        HTTPException 409: If an account with the same code already exists.
+    """
     if (await db.execute(select(Account).where(Account.code == payload.code))).scalar_one_or_none():
         raise HTTPException(status_code=409, detail=f"Account code '{payload.code}' already exists")
     acct = Account(**payload.model_dump())
@@ -154,6 +170,10 @@ async def create_account(db: AsyncSession, payload: AccountCreate) -> AccountRes
 # ── Journal Entries ───────────────────────────────────────────────────────────
 
 async def _next_reference(db: AsyncSession) -> str:
+    """Generate the next sequential journal entry reference for the current year.
+
+    Format: JE-YYYY-NNN (e.g. JE-2026-001). The counter resets each calendar year.
+    """
     year   = datetime.now(timezone.utc).year
     prefix = f"JE-{year}-"
     count  = (await db.execute(
@@ -163,6 +183,11 @@ async def _next_reference(db: AsyncSession) -> str:
 
 
 async def _assert_period_open(db: AsyncSession, entry_date: date) -> None:
+    """Guard that the accounting period for entry_date has not been closed.
+
+    Raises:
+        HTTPException 409: If a ClosedPeriod record exists for the same year/month.
+    """
     closed = (await db.execute(
         select(ClosedPeriod).where(
             ClosedPeriod.year  == entry_date.year,
@@ -177,6 +202,7 @@ async def _assert_period_open(db: AsyncSession, entry_date: date) -> None:
 
 
 async def list_journal_entries(db: AsyncSession, limit: int = 20) -> JournalEntryListResponse:
+    """Return the most recent journal entries ordered by entry date descending."""
     rows  = (await db.execute(
         select(JournalEntry)
         .order_by(JournalEntry.entry_date.desc(), JournalEntry.created_at.desc())
@@ -187,6 +213,15 @@ async def list_journal_entries(db: AsyncSession, limit: int = 20) -> JournalEntr
 
 
 async def create_journal_entry(db: AsyncSession, payload: JournalEntryCreate) -> JournalEntryResponse:
+    """Create a new journal entry in DRAFT status.
+
+    Validates that the amount is non-zero and the period is open before
+    persisting. A sequential reference (JE-YYYY-NNN) is auto-assigned.
+
+    Raises:
+        HTTPException 400: If both debit and credit amounts are zero.
+        HTTPException 409: If the entry date falls within a closed period.
+    """
     if payload.debit_amount == 0 and payload.credit_amount == 0:
         raise HTTPException(status_code=400, detail="Entry must have a non-zero debit or credit amount")
     await _assert_period_open(db, payload.entry_date)
@@ -208,6 +243,15 @@ async def create_journal_entry(db: AsyncSession, payload: JournalEntryCreate) ->
 
 
 async def post_journal_entry(db: AsyncSession, entry_id) -> JournalEntryResponse:
+    """Finalise a DRAFT journal entry by transitioning it to POSTED status.
+
+    Updates the linked account's balance using standard double-entry rules
+    (debit increases Assets/Expenses; credit increases Liabilities/Equity/Revenue).
+
+    Raises:
+        HTTPException 404: If the entry does not exist.
+        HTTPException 409: If the entry is already posted or the period is closed.
+    """
     entry = (await db.execute(
         select(JournalEntry).where(JournalEntry.id == entry_id)
     )).scalar_one_or_none()
@@ -263,6 +307,13 @@ def _je_to_response(entry: JournalEntry) -> JournalEntryResponse:
 # ── Bank Reconciliation ───────────────────────────────────────────────────────
 
 def _reconciliation_status(bank: BankAccount) -> str:
+    """Derive reconciliation status from the number of days since last reconciliation.
+
+    Returns:
+        "reconciled" — reconciled within the last 31 days
+        "pending"    — 32–62 days since last reconciliation
+        "overdue"    — never reconciled or more than 62 days ago
+    """
     if bank.last_reconciled_at is None:
         return "overdue"
     now   = datetime.now(timezone.utc)
@@ -275,6 +326,7 @@ def _reconciliation_status(bank: BankAccount) -> str:
 
 
 async def list_bank_accounts(db: AsyncSession) -> list[BankAccountResponse]:
+    """Return all active bank accounts with reconciliation status and unreconciled count."""
     banks = (await db.execute(
         select(BankAccount).where(BankAccount.is_active == True).order_by(BankAccount.name)
     )).scalars().all()
@@ -301,6 +353,7 @@ async def list_bank_accounts(db: AsyncSession) -> list[BankAccountResponse]:
 
 
 async def get_bank_transactions(db: AsyncSession, bank_account_id) -> BankTransactionListResponse:
+    """Return all transactions for a bank account ordered by date descending."""
     rows = (await db.execute(
         select(BankTransaction)
         .where(BankTransaction.bank_account_id == bank_account_id)
@@ -336,10 +389,17 @@ async def import_bank_statement(
     except UnicodeDecodeError:
         text = content.decode("latin-1")
 
-    reader     = csv.DictReader(io.StringIO(text))
-    headers    = [h.strip().lower() for h in (reader.fieldnames or [])]
-    created    = 0
-    skipped    = 0
+    reader  = csv.DictReader(io.StringIO(text))
+    headers = [h.strip().lower() for h in (reader.fieldnames or [])]
+
+    if "date" not in headers and "transaction date" not in headers:
+        raise HTTPException(
+            status_code=400,
+            detail="Invalid CSV: must contain a 'Date' column. Supported formats: Date/Description/Amount or Date/Description/Debit/Credit.",
+        )
+
+    created  = 0
+    skipped  = 0
 
     # Detect format
     has_debit_credit = any(h in headers for h in ("debit", "withdrawals", "withdrawal"))
@@ -404,6 +464,17 @@ def _parse_amount(s: str) -> float:
 async def reconcile_transactions(
     db: AsyncSession, bank_account_id, payload: ReconcileRequest
 ) -> dict:
+    """Mark the specified transactions as reconciled and update the bank account timestamp.
+
+    Passing an empty transaction_ids list is valid — it still updates
+    last_reconciled_at, which resets the reconciliation status to "reconciled".
+
+    Raises:
+        HTTPException 404: If the bank account does not exist.
+
+    Returns:
+        dict with key "reconciled" — count of transactions updated.
+    """
     bank = (await db.execute(
         select(BankAccount).where(BankAccount.id == bank_account_id)
     )).scalar_one_or_none()
@@ -430,6 +501,12 @@ async def reconcile_transactions(
 # ── Close Period ─────────────────────────────────────────────────────────────
 
 async def get_close_period_preview(db: AsyncSession, year: int, month: int) -> ClosePeriodPreview:
+    """Return a pre-close summary for the given year/month without making any changes.
+
+    Provides the accountant with a checklist before committing to a period close:
+    posted entry count, open draft count, unreconciled bank transactions,
+    net balance, and whether the period is already closed.
+    """
     already_closed = (await db.execute(
         select(ClosedPeriod).where(ClosedPeriod.year == year, ClosedPeriod.month == month)
     )).scalar_one_or_none() is not None
@@ -488,6 +565,17 @@ async def get_close_period_preview(db: AsyncSession, year: int, month: int) -> C
 async def close_period(
     db: AsyncSession, payload: ClosePeriodRequest, user_id=None
 ) -> ClosedPeriodResponse:
+    """Permanently lock an accounting period.
+
+    Once closed, no journal entries can be created or posted for dates
+    within the locked month. This operation is irreversible.
+
+    Args:
+        user_id: UUID of the authenticated user performing the close (audit trail).
+
+    Raises:
+        HTTPException 409: If the period is already closed.
+    """
     existing = (await db.execute(
         select(ClosedPeriod).where(
             ClosedPeriod.year == payload.year, ClosedPeriod.month == payload.month
@@ -512,6 +600,7 @@ async def close_period(
 
 
 async def list_closed_periods(db: AsyncSession) -> list[ClosedPeriodResponse]:
+    """Return all closed periods ordered by year and month descending."""
     rows = (await db.execute(
         select(ClosedPeriod).order_by(ClosedPeriod.year.desc(), ClosedPeriod.month.desc())
     )).scalars().all()
@@ -521,6 +610,11 @@ async def list_closed_periods(db: AsyncSession) -> list[ClosedPeriodResponse]:
 # ── Financial Reports ─────────────────────────────────────────────────────────
 
 async def _account_report_lines(db: AsyncSession, account_types: list[AccountType]) -> list[ReportLineItem]:
+    """Build report line items for the given account types.
+
+    For each active account of the requested type, sums all posted debit and
+    credit journal entry amounts and returns only accounts with non-zero activity.
+    """
     rows = (await db.execute(
         select(Account).where(
             Account.account_type.in_(account_types),
@@ -557,6 +651,7 @@ async def _account_report_lines(db: AsyncSession, account_types: list[AccountTyp
 
 
 async def get_profit_loss(db: AsyncSession) -> ProfitLossReport:
+    """Compute the year-to-date Profit & Loss report from posted journal entries."""
     now = datetime.now(timezone.utc)
     revenue_items = await _account_report_lines(db, [AccountType.REVENUE])
     expense_items = await _account_report_lines(db, [AccountType.EXPENSE])
@@ -573,6 +668,10 @@ async def get_profit_loss(db: AsyncSession) -> ProfitLossReport:
 
 
 async def get_balance_sheet(db: AsyncSession) -> BalanceSheetReport:
+    """Compute the Balance Sheet as of today.
+
+    Liabilities + Equity + Net Income should equal Total Assets (accounting equation).
+    """
     asset_items     = await _account_report_lines(db, [AccountType.ASSET])
     liability_items = await _account_report_lines(db, [AccountType.LIABILITY])
     equity_items    = await _account_report_lines(db, [AccountType.EQUITY])
@@ -596,6 +695,11 @@ async def get_balance_sheet(db: AsyncSession) -> BalanceSheetReport:
 
 
 async def get_trial_balance(db: AsyncSession) -> TrialBalanceReport:
+    """Compute the Trial Balance across all account types.
+
+    is_balanced=true confirms that total debits equal total credits,
+    verifying the integrity of the double-entry ledger.
+    """
     all_items = await _account_report_lines(
         db, [AccountType.ASSET, AccountType.LIABILITY, AccountType.EQUITY,
              AccountType.REVENUE, AccountType.EXPENSE]
@@ -612,6 +716,12 @@ async def get_trial_balance(db: AsyncSession) -> TrialBalanceReport:
 
 
 async def get_cash_flow(db: AsyncSession) -> CashFlowReport:
+    """Compute the Cash Flow report from imported bank transactions.
+
+    Inflows  = transactions with a positive amount (money received).
+    Outflows = transactions with a negative amount (money paid out).
+    Returns an empty report if no bank statements have been imported yet.
+    """
     now = datetime.now(timezone.utc)
     # Cash flow = bank transaction movements (credits = inflows, debits = outflows)
     inflow_rows = (await db.execute(
