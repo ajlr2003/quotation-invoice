@@ -10,6 +10,7 @@ from app.models.base import AuditMixin, TimestampMixin, UUIDPrimaryKeyMixin
 from app.models.enums import (
     ApprovalEntityType,
     ApprovalStatus,
+    CrmLeadStage,
     DocumentEntityType,
     DocumentType,
     PurchaseOrderStatus,
@@ -44,6 +45,7 @@ from app.models.sales_quotation import SalesQuotation
 from app.models.sales_quotation_item import SalesQuotationItem
 from app.models.sales_order import SalesOrder
 from app.models.sales_order_item import SalesOrderItem
+from app.models.crm_lead import CrmLead
 
 __all__ = [
     # Mixins
@@ -70,4 +72,5 @@ __all__ = [
     "BankAccount", "BankAccountType",
     "BankTransaction",
     "ClosedPeriod",
+    "CrmLead", "CrmLeadStage",
 ]

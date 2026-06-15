@@ -39,7 +39,7 @@ import app.models  # noqa: F401
 from app.routers import (
     auth, users, clients, quotations, invoices, suppliers, rfqs,
     purchase_orders, grn, purchase_invoices, sales_quotations, sales_orders,
-    dashboard, accounting,
+    dashboard, accounting, crm,
 )
 
 logger = logging.getLogger(__name__)
@@ -248,6 +248,7 @@ def create_application() -> FastAPI:
     app.include_router(sales_orders.router,       prefix=f"{API_PREFIX}/sales/orders",      tags=["Sales Orders"])
     app.include_router(dashboard.router,          prefix=f"{API_PREFIX}/dashboard",         tags=["Dashboard"])
     app.include_router(accounting.router,         prefix=f"{API_PREFIX}/accounting",        tags=["Accounting"])
+    app.include_router(crm.router,               prefix=f"{API_PREFIX}/crm",               tags=["CRM"])
 
     # ── Health-check endpoints ────────────────────────────────────────────────
 

@@ -158,3 +158,17 @@ class DocumentType(str, enum.Enum):
     WORD  = "word"
     IMAGE = "image"
     OTHER = "other"
+
+
+# ── CRM ───────────────────────────────────────────────────────────────────────
+
+class CrmLeadStage(str, enum.Enum):
+    """Pipeline stage for a CRM lead/opportunity.
+
+    Transitions: ``new_leads`` → ``qualified`` → ``proposal`` → ``closed_won``
+    A lead can also be moved backwards (e.g. re-qualification) or marked lost.
+    """
+    NEW_LEADS  = "new_leads"
+    QUALIFIED  = "qualified"
+    PROPOSAL   = "proposal"
+    CLOSED_WON = "closed_won"
