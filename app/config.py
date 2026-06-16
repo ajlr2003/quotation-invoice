@@ -72,6 +72,12 @@ class Settings(BaseSettings):
     # Absolute path to logo JPG/PNG; if empty, a text-only fallback is rendered
     COMPANY_LOGO_PATH: str = ""
 
+    # ── Odoo integration ─────────────────────────────────────────────────────
+    ODOO_URL: str = ""          # e.g. https://kytos1.odoo.com
+    ODOO_DB: str = ""           # Odoo database name, e.g. kytos1
+    ODOO_LOGIN: str = ""        # Odoo account email
+    ODOO_API_KEY: str = ""      # Odoo API key (Settings → My Profile → API Keys)
+
     # ── Logging ───────────────────────────────────────────────────────────────
     LOG_LEVEL: str = "INFO"
 
