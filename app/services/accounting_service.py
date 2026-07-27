@@ -12,13 +12,14 @@
 
 from __future__ import annotations
 
+import calendar
 import csv
 import io
 from datetime import date, datetime, timezone
 from typing import List
 
 from fastapi import HTTPException, UploadFile, status
-from sqlalchemy import func, select
+from sqlalchemy import extract, func, select
 from sqlalchemy.ext.asyncio import AsyncSession
 from sqlalchemy.orm import selectinload
 
@@ -36,7 +37,9 @@ from app.schemas.accounting import (
     BankAccountResponse,
     BankTransactionListResponse,
     BankTransactionResponse,
+    CashFlowMonthPoint,
     CashFlowReport,
+    CashFlowTrendReport,
     ClosedPeriodResponse,
     ClosePeriodPreview,
     ClosePeriodRequest,
@@ -765,3 +768,52 @@ async def get_cash_flow(db: AsyncSession) -> CashFlowReport:
         total_outflows=round(total_out, 2),
         net_cash_flow=round(total_in - total_out, 2),
     )
+
+
+async def get_cash_flow_trend(db: AsyncSession) -> CashFlowTrendReport:
+    """Real monthly inflow/outflow series from imported bank transactions
+    (last 6 calendar months), plus the bank-reconciliation rate — used as an
+    honest "data health" signal in place of a fake ML model score."""
+    now = datetime.now(timezone.utc)
+    y, m = now.year, now.month
+    year_months = []
+    for _ in range(6):
+        year_months.append((y, m))
+        m -= 1
+        if m == 0:
+            m = 12
+            y -= 1
+    year_months.reverse()
+
+    points: List[CashFlowMonthPoint] = []
+    for (yy, mm) in year_months:
+        inflow_row = await db.execute(
+            select(func.coalesce(func.sum(BankTransaction.amount), 0)).where(
+                extract("year", BankTransaction.transaction_date) == yy,
+                extract("month", BankTransaction.transaction_date) == mm,
+                BankTransaction.amount > 0,
+            )
+        )
+        outflow_row = await db.execute(
+            select(func.coalesce(func.sum(BankTransaction.amount), 0)).where(
+                extract("year", BankTransaction.transaction_date) == yy,
+                extract("month", BankTransaction.transaction_date) == mm,
+                BankTransaction.amount < 0,
+            )
+        )
+        inflow = float(inflow_row.scalar_one())
+        outflow = abs(float(outflow_row.scalar_one()))
+        points.append(CashFlowMonthPoint(
+            label=calendar.month_abbr[mm],
+            inflow=round(inflow, 2),
+            outflow=round(outflow, 2),
+            net=round(inflow - outflow, 2),
+        ))
+
+    total_txns = int((await db.execute(select(func.count()).select_from(BankTransaction))).scalar_one())
+    reconciled_txns = int((await db.execute(
+        select(func.count()).select_from(BankTransaction).where(BankTransaction.is_reconciled.is_(True))
+    )).scalar_one())
+    reconciliation_pct = round(reconciled_txns / total_txns * 100, 1) if total_txns > 0 else None
+
+    return CashFlowTrendReport(months=points, reconciliation_pct=reconciliation_pct)

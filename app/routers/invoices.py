@@ -17,12 +17,15 @@ from fastapi import APIRouter, Depends, status
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from app.database import get_db
-from app.middleware.auth import get_current_user
+from app.middleware.auth import get_current_user, require_roles
+from app.models.enums import UserRole
 from app.schemas.invoice import InvoiceFromGRNRequest, InvoiceListResponse, InvoiceResponse
 from app.schemas.purchase_invoice import PurchaseInvoiceCreate, PurchaseInvoiceResponse
 from app.services import purchase_invoice_service
 
 router = APIRouter()
+
+_invoice_roles = require_roles(UserRole.ADMIN, UserRole.MANAGER, UserRole.PURCHASER, UserRole.FINANCE)
 
 
 def _to_invoice_response(src: PurchaseInvoiceResponse) -> InvoiceResponse:
@@ -57,7 +60,7 @@ def _to_invoice_response(src: PurchaseInvoiceResponse) -> InvoiceResponse:
 async def create_invoice_from_grn(
     payload: InvoiceFromGRNRequest,
     db: AsyncSession = Depends(get_db),
-    _current_user=Depends(get_current_user),
+    _current_user=Depends(_invoice_roles),
 ):
     """
     Generate a supplier invoice directly from a GRN.
@@ -109,7 +112,7 @@ async def list_invoices(
 async def approve_invoice(
     invoice_id: uuid.UUID,
     db: AsyncSession = Depends(get_db),
-    _current_user=Depends(get_current_user),
+    _current_user=Depends(_invoice_roles),
 ):
     """
     Transition a **draft** invoice to **approved**.
@@ -131,7 +134,7 @@ async def approve_invoice(
 async def pay_invoice(
     invoice_id: uuid.UUID,
     db: AsyncSession = Depends(get_db),
-    _current_user=Depends(get_current_user),
+    _current_user=Depends(_invoice_roles),
 ):
     """
     Transition an **approved** invoice to **paid**.

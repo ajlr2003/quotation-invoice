@@ -85,7 +85,10 @@ class JournalEntryCreate(BaseModel):
     debit_amount: float = 0.0
     credit_amount: float = 0.0
     notes: Optional[str] = None
-    account_id: Optional[uuid.UUID] = None
+    # Required — an entry with no account never updates any account balance
+    # and is invisible to every financial report (P&L/Balance Sheet/Trial
+    # Balance), even though it still counts toward the dashboard KPIs.
+    account_id: uuid.UUID
 
 
 class JournalEntryListResponse(BaseModel):
@@ -208,3 +211,15 @@ class CashFlowReport(BaseModel):
     total_inflows: float
     total_outflows: float
     net_cash_flow: float
+
+
+class CashFlowMonthPoint(BaseModel):
+    label: str
+    inflow: float
+    outflow: float
+    net: float
+
+
+class CashFlowTrendReport(BaseModel):
+    months: List[CashFlowMonthPoint]
+    reconciliation_pct: Optional[float] = None

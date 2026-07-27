@@ -30,13 +30,13 @@ class Document(AuditMixin, Base):
 
     __tablename__ = "documents"
 
-    # ── Generic entity reference ──────────────────────────────────────────
-    entity_type: Mapped[DocumentEntityType] = mapped_column(
+    # ── Generic entity reference (optional — standalone docs have no linked entity) ──
+    entity_type: Mapped[Optional[DocumentEntityType]] = mapped_column(
         Enum(DocumentEntityType, name="document_entity_type"),
-        nullable=False,
+        nullable=True,
         index=True,
     )
-    entity_id: Mapped[uuid.UUID] = mapped_column(nullable=False, index=True)
+    entity_id: Mapped[Optional[uuid.UUID]] = mapped_column(nullable=True, index=True)
 
     # ── File metadata ─────────────────────────────────────────────────────
     document_type: Mapped[DocumentType] = mapped_column(

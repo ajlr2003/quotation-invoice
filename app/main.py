@@ -39,7 +39,8 @@ import app.models  # noqa: F401
 from app.routers import (
     auth, users, clients, quotations, invoices, suppliers, rfqs,
     purchase_orders, grn, purchase_invoices, sales_quotations, sales_orders,
-    dashboard, accounting, crm, odoo,
+    dashboard, accounting, crm, odoo, payments, projects, documents, inventory, expenses,
+    activity, ai_copilot, vendor_pricelists,
 )
 
 logger = logging.getLogger(__name__)
@@ -96,22 +97,34 @@ async def _seed_test_user() -> None:
     from app.models.user import User
     from app.utils.security import hash_password
 
+    from app.models.enums import UserRole
+
     async with AsyncSessionLocal() as session:
         existing = await session.execute(select(User).where(User.email == "test@example.com"))
-        if existing.scalar_one_or_none():
-            return
-        from app.models.enums import UserRole
-        user = User(
-            email="test@example.com",
-            full_name="Test User",
-            hashed_password=hash_password("test123"),
-            role=UserRole.MANAGER,
-            is_active=True,
-            is_verified=True,
-        )
-        session.add(user)
+        if not existing.scalar_one_or_none():
+            session.add(User(
+                email="test@example.com",
+                full_name="Test User",
+                hashed_password=hash_password("test123"),
+                role=UserRole.MANAGER,
+                is_active=True,
+                is_verified=True,
+            ))
+            logger.info("Seeded test user: test@example.com / test123")
+
+        existing_admin = await session.execute(select(User).where(User.email == "admin@example.com"))
+        if not existing_admin.scalar_one_or_none():
+            session.add(User(
+                email="admin@example.com",
+                full_name="Admin User",
+                hashed_password=hash_password("admin123"),
+                role=UserRole.ADMIN,
+                is_active=True,
+                is_verified=True,
+            ))
+            logger.info("Seeded admin user: admin@example.com / admin123")
+
         await session.commit()
-        logger.info("Seeded test user: test@example.com / test123")
 
 
 async def _seed_suppliers() -> None:
@@ -250,6 +263,14 @@ def create_application() -> FastAPI:
     app.include_router(accounting.router,         prefix=f"{API_PREFIX}/accounting",        tags=["Accounting"])
     app.include_router(crm.router,               prefix=f"{API_PREFIX}/crm",               tags=["CRM"])
     app.include_router(odoo.router,              prefix=f"{API_PREFIX}/odoo",              tags=["Odoo"])
+    app.include_router(payments.router,          prefix=f"{API_PREFIX}/payments",          tags=["Payments"])
+    app.include_router(projects.router,          prefix=f"{API_PREFIX}/projects",          tags=["Projects"])
+    app.include_router(documents.router,         prefix=f"{API_PREFIX}/documents",         tags=["Documents"])
+    app.include_router(inventory.router,         prefix=f"{API_PREFIX}/inventory",         tags=["Inventory"])
+    app.include_router(expenses.router,          prefix=f"{API_PREFIX}/expenses",          tags=["Expenses"])
+    app.include_router(activity.router,          prefix=f"{API_PREFIX}/activity",          tags=["Activity"])
+    app.include_router(ai_copilot.router,        prefix=f"{API_PREFIX}/ai",                tags=["AI Copilot"])
+    app.include_router(vendor_pricelists.router, prefix=f"{API_PREFIX}/vendor-pricelists",  tags=["Vendor Pricelists"])
 
     # ── Health-check endpoints ────────────────────────────────────────────────
 

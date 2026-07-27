@@ -20,17 +20,21 @@ from fastapi import APIRouter, Depends
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from app.database import get_db
-from app.middleware.auth import get_current_user
+from app.middleware.auth import get_current_user, require_roles
+from app.models.enums import UserRole
 from app.schemas.crm import (
     CrmKPIResponse,
     CrmLeadCreate,
     CrmLeadListResponse,
     CrmLeadResponse,
     CrmLeadStageUpdate,
+    LeadRfqListResponse,
 )
 from app.services import crm_service
 
 router = APIRouter()
+
+_sales_roles = require_roles(UserRole.ADMIN, UserRole.MANAGER, UserRole.SALES)
 
 
 # =============================================================================
@@ -86,9 +90,9 @@ async def list_leads(
 async def create_lead(
     payload: CrmLeadCreate,
     db: AsyncSession = Depends(get_db),
-    _=Depends(get_current_user),
+    current_user=Depends(_sales_roles),
 ):
-    return await crm_service.create_lead(db, payload)
+    return await crm_service.create_lead(db, payload, user_id=current_user.id)
 
 
 @router.patch(
@@ -105,9 +109,28 @@ async def update_lead_stage(
     lead_id: uuid.UUID,
     payload: CrmLeadStageUpdate,
     db: AsyncSession = Depends(get_db),
+    current_user=Depends(_sales_roles),
+):
+    return await crm_service.update_stage(db, lead_id, payload, user_id=current_user.id)
+
+
+@router.get(
+    "/leads/{lead_id}/rfqs",
+    response_model=LeadRfqListResponse,
+    summary="List all RFQs linked to a lead",
+    description=(
+        "Returns every RFQ raised against this lead, most recent first. "
+        "A lead's items are often split across multiple supplier RFQs, so "
+        "this lets the lead screen show all of them without hunting "
+        "through the RFQ list."
+    ),
+)
+async def list_lead_rfqs(
+    lead_id: uuid.UUID,
+    db: AsyncSession = Depends(get_db),
     _=Depends(get_current_user),
 ):
-    return await crm_service.update_stage(db, lead_id, payload)
+    return await crm_service.list_lead_rfqs(db, lead_id)
 
 
 @router.delete(
@@ -119,6 +142,6 @@ async def update_lead_stage(
 async def delete_lead(
     lead_id: uuid.UUID,
     db: AsyncSession = Depends(get_db),
-    _=Depends(get_current_user),
+    _=Depends(_sales_roles),
 ):
     await crm_service.delete_lead(db, lead_id)

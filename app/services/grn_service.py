@@ -52,19 +52,20 @@ def _recalculate_po_status(po: PurchaseOrder) -> None:
 
 
 async def _grn_to_response(db: AsyncSession, grn: GRN) -> GRNResponse:
-    """Fetch supplier_name for a single GRN and build the response."""
+    """Fetch supplier_name and ordered_quantity for a single GRN and build the response."""
     result = await db.execute(
-        select(Supplier.company_name)
+        select(Supplier.company_name, PurchaseOrder.ordered_quantity)
         .select_from(PurchaseOrder)
         .join(Supplier, Supplier.id == PurchaseOrder.supplier_id)
         .where(PurchaseOrder.id == grn.po_id)
     )
-    supplier_name = result.scalar_one()
+    supplier_name, ordered_quantity = result.one()
     return GRNResponse(
         id=grn.id,
         po_id=grn.po_id,
         supplier_name=supplier_name,
         received_quantity=grn.received_quantity,
+        ordered_quantity=float(ordered_quantity or 0),
         created_at=grn.created_at,
     )
 
@@ -118,7 +119,7 @@ async def list_grns(
     po_id: uuid.UUID | None = None,
 ) -> GRNListResponse:
     query = (
-        select(GRN, Supplier.company_name)
+        select(GRN, Supplier.company_name, PurchaseOrder.ordered_quantity)
         .join(PurchaseOrder, PurchaseOrder.id == GRN.po_id)
         .join(Supplier, Supplier.id == PurchaseOrder.supplier_id)
         .order_by(GRN.created_at.desc())
@@ -134,8 +135,9 @@ async def list_grns(
             po_id=grn.po_id,
             supplier_name=supplier_name,
             received_quantity=grn.received_quantity,
+            ordered_quantity=float(ordered_quantity or 0),
             created_at=grn.created_at,
         )
-        for grn, supplier_name in rows
+        for grn, supplier_name, ordered_quantity in rows
     ]
     return GRNListResponse(items=items, total=len(items))

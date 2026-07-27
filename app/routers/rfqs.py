@@ -20,13 +20,14 @@ from fastapi import APIRouter, Depends, Query, status
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from app.database import get_db
-from app.middleware.auth import get_current_user
-from app.models.enums import RFQStatus
+from app.middleware.auth import get_current_user, require_roles
+from app.models.enums import RFQStatus, UserRole
 from app.schemas.rfq import (
     RFQCreateRequest,
     RFQItemCreateRequest,
     RFQItemListResponse,
     RFQItemResponse,
+    RFQKpiResponse,
     RFQListResponse,
     RFQResponse,
     RFQUpdateRequest,
@@ -36,6 +37,8 @@ from app.schemas.supplier_quotation import QuotationListResponse
 from app.services import rfq_service, supplier_quotation_service
 
 router = APIRouter(redirect_slashes=False)
+
+_purchase_roles = require_roles(UserRole.ADMIN, UserRole.MANAGER, UserRole.PURCHASER)
 
 
 # ============================================================================
@@ -51,7 +54,7 @@ router = APIRouter(redirect_slashes=False)
 async def create_rfq(
     payload: RFQCreateRequest,
     db: AsyncSession = Depends(get_db),
-    current_user=Depends(get_current_user),
+    current_user=Depends(_purchase_roles),
 ):
     """
     Create a new Request for Quotation.
@@ -91,6 +94,19 @@ async def list_rfqs(
 
 
 @router.get(
+    "/stats/kpis",
+    response_model=RFQKpiResponse,
+    summary="RFQ pipeline KPI snapshot",
+)
+async def get_rfq_kpis(
+    db: AsyncSession = Depends(get_db),
+    _current_user=Depends(get_current_user),
+):
+    """Return draft/sent/awaiting-evaluation/awarded/late counts and avg days-to-PO."""
+    return await rfq_service.get_rfq_kpis(db)
+
+
+@router.get(
     "/{rfq_id}",
     response_model=RFQResponse,
     summary="Get RFQ by ID",
@@ -114,7 +130,7 @@ async def update_rfq(
     rfq_id: uuid.UUID,
     payload: RFQUpdateRequest,
     db: AsyncSession = Depends(get_db),
-    current_user=Depends(get_current_user),
+    current_user=Depends(_purchase_roles),
 ):
     """
     Partially update an RFQ.
@@ -138,7 +154,7 @@ async def update_rfq(
 async def delete_rfq(
     rfq_id: uuid.UUID,
     db: AsyncSession = Depends(get_db),
-    current_user=Depends(get_current_user),
+    current_user=Depends(_purchase_roles),
 ):
     """
     Permanently delete an RFQ and all its line items.
@@ -158,7 +174,7 @@ async def delete_rfq(
 async def send_rfq(
     rfq_id: uuid.UUID,
     db: AsyncSession = Depends(get_db),
-    current_user=Depends(get_current_user),
+    current_user=Depends(_purchase_roles),
 ):
     """
     Transition an RFQ from **DRAFT** to **SENT**.
@@ -181,7 +197,7 @@ async def add_rfq_item(
     rfq_id: uuid.UUID,
     payload: RFQItemCreateRequest,
     db: AsyncSession = Depends(get_db),
-    current_user=Depends(get_current_user),
+    current_user=Depends(_purchase_roles),
 ):
     """
     Add a new line item to an existing RFQ.
@@ -214,7 +230,7 @@ async def delete_rfq_item(
     rfq_id: uuid.UUID,
     item_id: uuid.UUID,
     db: AsyncSession = Depends(get_db),
-    current_user=Depends(get_current_user),
+    current_user=Depends(_purchase_roles),
 ):
     """
     Remove a line item from an RFQ and re-sequence remaining line numbers.
@@ -237,7 +253,7 @@ async def select_supplier(
     rfq_id: uuid.UUID,
     payload: SelectSupplierRequest,
     db: AsyncSession = Depends(get_db),
-    current_user=Depends(get_current_user),
+    current_user=Depends(_purchase_roles),
 ):
     """
     Award the RFQ to a specific supplier.
@@ -258,7 +274,7 @@ async def select_supplier(
 async def auto_select_supplier(
     rfq_id: uuid.UUID,
     db: AsyncSession = Depends(get_db),
-    current_user=Depends(get_current_user),
+    current_user=Depends(_purchase_roles),
 ):
     """
     Automatically award the RFQ to the supplier with the lowest submitted quotation price.

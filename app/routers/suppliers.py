@@ -17,7 +17,9 @@ from fastapi import APIRouter, Depends, Query, status
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from app.database import get_db
-from app.middleware.auth import get_current_user
+from app.middleware.auth import get_current_user, require_roles
+from app.models.enums import UserRole
+from app.schemas.rfq import RFQListResponse
 from app.schemas.supplier import (
     SupplierCreateRequest,
     SupplierUpdateRequest,
@@ -27,6 +29,8 @@ from app.schemas.supplier import (
 from app.services import supplier_service
 
 router = APIRouter()
+
+_supplier_write_roles = require_roles(UserRole.ADMIN, UserRole.MANAGER, UserRole.PURCHASER)
 
 
 # ---------------------------------------------------------------------------
@@ -42,10 +46,10 @@ router = APIRouter()
 async def create_supplier(
     payload: SupplierCreateRequest,
     db: AsyncSession = Depends(get_db),
-    _current_user=Depends(get_current_user),   # JWT guard
+    current_user=Depends(_supplier_write_roles),
 ):
     """Register a new supplier/vendor in the system."""
-    return await supplier_service.create_supplier(db, payload)
+    return await supplier_service.create_supplier(db, payload, user_id=current_user.id)
 
 
 # ---------------------------------------------------------------------------
@@ -113,13 +117,31 @@ async def update_supplier(
     supplier_id: uuid.UUID,
     payload: SupplierUpdateRequest,
     db: AsyncSession = Depends(get_db),
-    _current_user=Depends(get_current_user),
+    current_user=Depends(_supplier_write_roles),
 ):
     """
     Partially update a supplier record.
     Only the fields included in the request body are updated.
     """
-    return await supplier_service.update_supplier(db, supplier_id, payload)
+    return await supplier_service.update_supplier(db, supplier_id, payload, user_id=current_user.id)
+
+
+# ---------------------------------------------------------------------------
+# GET /suppliers/{supplier_id}/rfqs  — RFQs this supplier was invited to
+# ---------------------------------------------------------------------------
+
+@router.get(
+    "/{supplier_id}/rfqs",
+    response_model=RFQListResponse,
+    summary="List RFQs this supplier has been invited to",
+)
+async def list_supplier_rfqs(
+    supplier_id: uuid.UUID,
+    db: AsyncSession = Depends(get_db),
+    _current_user=Depends(get_current_user),
+):
+    """Return every RFQ this supplier was invited to, most recent first."""
+    return await supplier_service.list_supplier_rfqs(db, supplier_id)
 
 
 # ---------------------------------------------------------------------------
@@ -134,10 +156,10 @@ async def update_supplier(
 async def delete_supplier(
     supplier_id: uuid.UUID,
     db: AsyncSession = Depends(get_db),
-    _current_user=Depends(get_current_user),
+    current_user=Depends(_supplier_write_roles),
 ):
     """
     Soft-delete a supplier by setting is_active = False.
     Suppliers with pending quotes cannot be deactivated.
     """
-    return await supplier_service.delete_supplier(db, supplier_id)
+    return await supplier_service.delete_supplier(db, supplier_id, user_id=current_user.id)

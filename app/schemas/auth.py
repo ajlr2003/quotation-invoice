@@ -19,12 +19,14 @@ from app.models.enums import UserRole
 # ---------------------------------------------------------------------------
 
 class RegisterRequest(BaseModel):
+    # No client-settable `role` field: self-registration always creates a
+    # VIEWER account (see auth_service.register_user). Role escalation is
+    # only possible afterward, by an ADMIN, via PATCH /users/{id}/role.
     email: EmailStr
     password: str = Field(min_length=8, max_length=128)
     full_name: str = Field(min_length=2, max_length=255)
     phone: Optional[str] = Field(default=None, max_length=50)
     department: Optional[str] = Field(default=None, max_length=100)
-    role: UserRole = UserRole.PURCHASER
 
     @field_validator("password")
     @classmethod
@@ -88,6 +90,19 @@ class UserUpdateRequest(BaseModel):
     full_name: Optional[str] = Field(default=None, min_length=2, max_length=255)
     phone: Optional[str]     = Field(default=None, max_length=50)
     department: Optional[str] = Field(default=None, max_length=100)
+
+
+class UserListResponse(BaseModel):
+    items: list[UserResponse]
+    total: int
+
+
+class UserRoleUpdateRequest(BaseModel):
+    role: UserRole
+
+
+class UserStatusUpdateRequest(BaseModel):
+    is_active: bool
 
 
 class ChangePasswordRequest(BaseModel):

@@ -15,7 +15,8 @@ from fastapi import APIRouter, Depends, status
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from app.database import get_db
-from app.middleware.auth import get_current_user
+from app.middleware.auth import get_current_user, require_roles
+from app.models.enums import UserRole
 from app.schemas.purchase_invoice import (
     PurchaseInvoiceCreate,
     PurchaseInvoiceListResponse,
@@ -24,6 +25,8 @@ from app.schemas.purchase_invoice import (
 from app.services import purchase_invoice_service
 
 router = APIRouter()
+
+_purchase_invoice_roles = require_roles(UserRole.ADMIN, UserRole.MANAGER, UserRole.PURCHASER, UserRole.FINANCE)
 
 
 @router.post(
@@ -35,7 +38,7 @@ router = APIRouter()
 async def create_invoice(
     payload: PurchaseInvoiceCreate,
     db: AsyncSession = Depends(get_db),
-    _current_user=Depends(get_current_user),
+    _current_user=Depends(_purchase_invoice_roles),
 ):
     """
     Generate a supplier invoice from a Goods Receipt Note.
@@ -70,7 +73,7 @@ async def list_invoices(
 async def approve_invoice(
     invoice_id: uuid.UUID,
     db: AsyncSession = Depends(get_db),
-    _current_user=Depends(get_current_user),
+    _current_user=Depends(_purchase_invoice_roles),
 ):
     """
     Transition a **draft** invoice to **approved**.
@@ -87,7 +90,7 @@ async def approve_invoice(
 async def pay_invoice(
     invoice_id: uuid.UUID,
     db: AsyncSession = Depends(get_db),
-    _current_user=Depends(get_current_user),
+    _current_user=Depends(_purchase_invoice_roles),
 ):
     """
     Transition an **approved** invoice to **paid**.

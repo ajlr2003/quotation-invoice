@@ -10,11 +10,14 @@ from fastapi import APIRouter, Depends, status
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from app.database import get_db
-from app.middleware.auth import get_current_user
+from app.middleware.auth import get_current_user, require_roles
+from app.models.enums import UserRole
 from app.schemas.supplier_quotation import QuotationCreate, QuotationResponse
 from app.services import supplier_quotation_service
 
 router = APIRouter()
+
+_purchase_roles = require_roles(UserRole.ADMIN, UserRole.MANAGER, UserRole.PURCHASER)
 
 @router.post(
     "",
@@ -25,7 +28,7 @@ router = APIRouter()
 async def submit_quotation(
     payload: QuotationCreate,
     db: AsyncSession = Depends(get_db),
-    _current_user=Depends(get_current_user),
+    _current_user=Depends(_purchase_roles),
 ):
     """
     Submit a supplier's price offer for an RFQ.

@@ -72,11 +72,28 @@ class Settings(BaseSettings):
     # Absolute path to logo JPG/PNG; if empty, a text-only fallback is rendered
     COMPANY_LOGO_PATH: str = ""
 
+    # ── AI Copilot (Anthropic Claude) ────────────────────────────────────────
+    ANTHROPIC_API_KEY: str = ""                  # sk-ant-... — leave empty to disable AI Copilot
+    ANTHROPIC_MODEL: str = "claude-opus-4-8"     # e.g. claude-sonnet-5 for lower cost
+
     # ── Odoo integration ─────────────────────────────────────────────────────
     ODOO_URL: str = ""          # e.g. https://kytos1.odoo.com
     ODOO_DB: str = ""           # Odoo database name, e.g. kytos1
     ODOO_LOGIN: str = ""        # Odoo account email
     ODOO_API_KEY: str = ""      # Odoo API key (Settings → My Profile → API Keys)
+    ODOO_PASSWORD: str = ""     # Odoo account password — needed for PDF download via web session
+
+    # ── Payment gateways ─────────────────────────────────────────────────────
+    STRIPE_SECRET_KEY: str = ""          # sk_test_... or sk_live_...
+    STRIPE_WEBHOOK_SECRET: str = ""      # whsec_... from `stripe listen` or dashboard
+    STRIPE_PUBLISHABLE_KEY: str = ""     # pk_test_... exposed to frontend
+    PAYPAL_CLIENT_ID: str = ""           # sandbox or live client ID
+    PAYPAL_CLIENT_SECRET: str = ""       # sandbox or live client secret
+    PAYPAL_MODE: str = "sandbox"         # "sandbox" or "live"
+    # Base URL of THIS backend (used to build Stripe success/cancel redirect URLs)
+    APP_BASE_URL: str = "http://localhost:8000"
+    # Base URL of the frontend (used to build post-payment redirect pages)
+    FRONTEND_BASE_URL: str = "http://localhost:5173"
 
     # ── Logging ───────────────────────────────────────────────────────────────
     LOG_LEVEL: str = "INFO"

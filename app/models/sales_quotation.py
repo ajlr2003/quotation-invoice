@@ -12,7 +12,7 @@ import uuid
 from datetime import date, datetime
 from typing import TYPE_CHECKING, List, Optional
 
-from sqlalchemy import Date, DateTime, Enum, Numeric, String, Text
+from sqlalchemy import Date, DateTime, Enum, ForeignKey, Numeric, String, Text
 from sqlalchemy.dialects.postgresql import UUID as PG_UUID
 from sqlalchemy.orm import Mapped, mapped_column, relationship
 
@@ -22,6 +22,8 @@ from app.models.enums import SalesQuotationStatus
 
 if TYPE_CHECKING:
     from app.models.sales_quotation_item import SalesQuotationItem
+    from app.models.rfq import RFQ
+    from app.models.user import User
 
 
 class SalesQuotation(AuditMixin, Base):
@@ -43,6 +45,7 @@ class SalesQuotation(AuditMixin, Base):
         String(50), unique=True, nullable=False, index=True
     )
     date: Mapped[Optional[date]] = mapped_column(Date)
+    delivery_date: Mapped[Optional[date]] = mapped_column(Date)
 
     # ── Commercial terms ──────────────────────────────────────────────────────
     currency: Mapped[str] = mapped_column(String(3), default="SAR", nullable=False)
@@ -50,6 +53,8 @@ class SalesQuotation(AuditMixin, Base):
     delivery_time: Mapped[Optional[str]] = mapped_column(String(100))
     delivery_location: Mapped[Optional[str]] = mapped_column(String(255))
     payment_terms: Mapped[Optional[str]] = mapped_column(String(255))
+    invoice_address: Mapped[Optional[str]] = mapped_column(Text)
+    delivery_address: Mapped[Optional[str]] = mapped_column(Text)
 
     # ── Customer contact details (denormalised — no FK to customers table) ────
     customer_name: Mapped[Optional[str]] = mapped_column(String(255))
@@ -67,9 +72,48 @@ class SalesQuotation(AuditMixin, Base):
     vat: Mapped[float] = mapped_column(Numeric(14, 2), default=0, nullable=False)
     total: Mapped[float] = mapped_column(Numeric(14, 2), default=0, nullable=False)
 
+    # ── CRM link (optional — links this quote to a CRM lead/opportunity) ──────
+    crm_lead_id: Mapped[Optional[uuid.UUID]] = mapped_column(
+        PG_UUID(as_uuid=True),
+        ForeignKey("crm_leads.id", ondelete="SET NULL"),
+        nullable=True,
+        index=True,
+    )
+
+    # ── RFQ link (optional — traces this quote back to the originating RFQ,
+    # so the quote_number can be auto-derived as "QT" + rfq_number) ───────────
+    rfq_id: Mapped[Optional[uuid.UUID]] = mapped_column(
+        PG_UUID(as_uuid=True),
+        ForeignKey("rfqs.id", ondelete="SET NULL"),
+        nullable=True,
+        index=True,
+    )
+
+    # ── Who created / approved this quotation (displayed on the record) ──────
+    created_by_id: Mapped[Optional[uuid.UUID]] = mapped_column(
+        PG_UUID(as_uuid=True),
+        ForeignKey("users.id", ondelete="SET NULL"),
+        nullable=True,
+        index=True,
+    )
+    approved_by_id: Mapped[Optional[uuid.UUID]] = mapped_column(
+        PG_UUID(as_uuid=True),
+        ForeignKey("users.id", ondelete="SET NULL"),
+        nullable=True,
+        index=True,
+    )
+    approved_at: Mapped[Optional[datetime]] = mapped_column(DateTime(timezone=True), nullable=True)
+
     # ── Notes ─────────────────────────────────────────────────────────────────
     remarks: Mapped[Optional[str]] = mapped_column(Text)
     terms: Mapped[Optional[str]] = mapped_column(Text)
+
+    # ── Tracker fields (mirrors the team's existing quotation tracker) ────────
+    oem: Mapped[Optional[str]] = mapped_column(String(200))
+    date_received: Mapped[Optional[date]] = mapped_column(Date)
+    deadline: Mapped[Optional[date]] = mapped_column(Date)
+    follow_up_date: Mapped[Optional[date]] = mapped_column(Date)
+    outcome: Mapped[Optional[str]] = mapped_column(String(100))
 
     # ── Status & audit timestamps ──────────────────────────────────────────────
     status: Mapped[SalesQuotationStatus] = mapped_column(
@@ -90,6 +134,32 @@ class SalesQuotation(AuditMixin, Base):
         cascade="all, delete-orphan",
         order_by="SalesQuotationItem.line_no",
     )
+    rfq: Mapped[Optional["RFQ"]] = relationship("RFQ", foreign_keys=[rfq_id], lazy="noload")
+    created_by: Mapped[Optional["User"]] = relationship(
+        "User", foreign_keys=[created_by_id], lazy="noload"
+    )
+    approved_by: Mapped[Optional["User"]] = relationship(
+        "User", foreign_keys=[approved_by_id], lazy="noload"
+    )
+
+    # ── Denormalised display helpers (require ``rfq``/``created_by``/
+    # ``approved_by`` to be eagerly loaded — see selectinload() in the
+    # service layer to avoid lazy-load errors under async sessions) ──────────
+    @property
+    def rfq_number(self) -> Optional[str]:
+        return self.rfq.rfq_number if self.rfq else None
+
+    @property
+    def customer_reference(self) -> Optional[str]:
+        return self.rfq.customer_reference if self.rfq else None
+
+    @property
+    def created_by_name(self) -> Optional[str]:
+        return self.created_by.full_name if self.created_by else None
+
+    @property
+    def approved_by_name(self) -> Optional[str]:
+        return self.approved_by.full_name if self.approved_by else None
 
     def __repr__(self) -> str:
         return f"<SalesQuotation {self.quote_number} status={self.status} total={self.total}>"

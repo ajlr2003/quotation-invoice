@@ -8,6 +8,7 @@
 
 from app.models.base import AuditMixin, TimestampMixin, UUIDPrimaryKeyMixin
 from app.models.enums import (
+    ActivityEntityType,
     ApprovalEntityType,
     ApprovalStatus,
     CrmLeadStage,
@@ -34,6 +35,7 @@ from app.models.rfq import RFQ
 from app.models.rfq_item import RFQItem
 from app.models.supplier_quote import SupplierQuote
 from app.models.supplier_quotation import SupplierQuotation
+from app.models.supplier_quotation_item import SupplierQuotationItem
 from app.models.quotation import Quotation
 from app.models.quotation_item import QuotationItem
 from app.models.approval import Approval
@@ -46,6 +48,16 @@ from app.models.sales_quotation_item import SalesQuotationItem
 from app.models.sales_order import SalesOrder
 from app.models.sales_order_item import SalesOrderItem
 from app.models.crm_lead import CrmLead
+from app.models.payment import Payment
+from app.models.project import Project
+from app.models.project_task import ProjectTask
+from app.models.project_milestone import ProjectMilestone
+from app.models.time_log import TimeLog
+from app.models.stock_item import StockItem
+from app.models.stock_movement import StockMovement
+from app.models.expense import Expense
+from app.models.activity_log import ActivityLog
+from app.models.vendor_pricelist import VendorPricelist
 
 __all__ = [
     # Mixins
@@ -54,10 +66,10 @@ __all__ = [
     "UserRole", "RFQStatus", "SupplierQuoteStatus",
     "QuotationStatus", "ApprovalStatus", "ApprovalEntityType",
     "DocumentEntityType", "DocumentType", "PurchaseOrderStatus",
-    "SalesQuotationStatus", "SalesOrderStatus",
+    "SalesQuotationStatus", "SalesOrderStatus", "ActivityEntityType",
     # Models
     "User", "Customer", "Supplier",
-    "RFQ", "RFQItem", "SupplierQuote", "SupplierQuotation",
+    "RFQ", "RFQItem", "SupplierQuote", "SupplierQuotation", "SupplierQuotationItem",
     "Quotation", "QuotationItem",
     "Approval", "Document",
     "PurchaseOrder",
@@ -73,4 +85,10 @@ __all__ = [
     "BankTransaction",
     "ClosedPeriod",
     "CrmLead", "CrmLeadStage",
+    "Payment",
+    "Project", "ProjectTask", "ProjectMilestone", "TimeLog",
+    "StockItem", "StockMovement",
+    "Expense",
+    "ActivityLog",
+    "VendorPricelist",
 ]

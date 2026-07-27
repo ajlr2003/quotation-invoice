@@ -58,6 +58,14 @@ class CrmLead(AuditMixin, Base):
     # card can display the quote reference and allow quick navigation.
     quote_number: Mapped[Optional[str]] = mapped_column(String(50), index=True)
 
+    # ── RFQ traceability ───────────────────────────────────────────────────────
+    # Populated at the same time as ``quote_number`` when the linked
+    # SalesQuotation traces back to an RFQ — surfaces both our internal RFQ
+    # number and the customer's own reference (e.g. SAP Ariba number) directly
+    # on the lead so it's visible without hunting through the RFQ screen.
+    rfq_number: Mapped[Optional[str]] = mapped_column(String(50), index=True)
+    customer_reference: Mapped[Optional[str]] = mapped_column(String(100))
+
     notes: Mapped[Optional[str]] = mapped_column(Text)
 
     def __repr__(self) -> str:

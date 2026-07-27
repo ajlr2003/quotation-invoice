@@ -39,12 +39,16 @@ from app.schemas.sales_quotation import (
     SalesQuotationListResponse,
     SalesQuotationResponse,
     SalesQuotationStatusUpdate,
+    SalesQuotationTrackingUpdate,
     SalesQuotationUpdate,
 )
 from app.services import sales_quotation_service
 
 # ── Role guard for mutating operations ───────────────────────────────────────
 _sales_roles = require_roles(UserRole.ADMIN, UserRole.MANAGER, UserRole.SALES)
+# Approval is deliberately restricted to managers/admins — a sales engineer
+# creates the quotation, a manager signs off on it.
+_approve_roles = require_roles(UserRole.ADMIN, UserRole.MANAGER)
 
 
 # ── Local response models (small enough to live here) ────────────────────────
@@ -87,7 +91,9 @@ async def create_quotation(
     Returns:
         The newly created quotation.
     """
-    return await sales_quotation_service.create_quotation(db, payload)
+    return await sales_quotation_service.create_quotation(
+        db, payload, user_id=current_user.id
+    )
 
 
 # ── List ──────────────────────────────────────────────────────────────────────
@@ -244,6 +250,34 @@ async def update_status(
     )
 
 
+@router.patch(
+    "/{quote_id}/tracking",
+    response_model=SalesQuotationResponse,
+    summary="Update tracker fields (OEM, deadline, follow-up date, outcome) — any status",
+)
+async def update_tracking(
+    quote_id: uuid.UUID,
+    payload: SalesQuotationTrackingUpdate,
+    db: AsyncSession = Depends(get_db),
+    current_user=Depends(_sales_roles),
+) -> SalesQuotationResponse:
+    """Update tracker-only fields regardless of quotation status.
+
+    Unlike ``PUT /{id}``, this does not require the quotation to still be
+    a DRAFT — it exists specifically for fields (deadline, follow-up date,
+    outcome) that are usually filled in after the quote has been sent.
+
+    Args:
+        quote_id: UUID of the quotation to update.
+        payload:  Fields to set.
+        db:       Injected async database session.
+
+    Returns:
+        The updated quotation.
+    """
+    return await sales_quotation_service.update_tracking_fields(db, quote_id, payload)
+
+
 @router.put(
     "/{quote_id}/send",
     response_model=SalesQuotationResponse,
@@ -318,6 +352,36 @@ async def reject_quotation(
     """
     return await sales_quotation_service.update_status(
         db, quote_id, "rejected", user_id=current_user.id
+    )
+
+
+# ── Approval stamp ────────────────────────────────────────────────────────────
+
+@router.put(
+    "/{quote_id}/approve",
+    response_model=SalesQuotationResponse,
+    summary="Stamp the quotation with the approving manager",
+)
+async def approve_quotation(
+    quote_id: uuid.UUID,
+    db: AsyncSession = Depends(get_db),
+    current_user=Depends(_approve_roles),
+) -> SalesQuotationResponse:
+    """Record who approved this quotation and when.
+
+    Requires ADMIN or MANAGER role. Independent of the send/accept/reject
+    status state machine — purely a visibility stamp on the record.
+
+    Args:
+        quote_id:     UUID of the quotation.
+        db:           Injected async database session.
+        current_user: Authenticated approving user.
+
+    Returns:
+        The updated quotation with ``approved_by`` / ``approved_at`` set.
+    """
+    return await sales_quotation_service.approve_quotation(
+        db, quote_id, user_id=current_user.id
     )
 
 

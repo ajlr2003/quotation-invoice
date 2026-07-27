@@ -14,11 +14,14 @@ from fastapi import APIRouter, Depends, Query, status
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from app.database import get_db
-from app.middleware.auth import get_current_user
+from app.middleware.auth import get_current_user, require_roles
+from app.models.enums import UserRole
 from app.schemas.grn import GRNCreate, GRNListResponse, GRNResponse
 from app.services import grn_service
 
 router = APIRouter()
+
+_purchase_roles = require_roles(UserRole.ADMIN, UserRole.MANAGER, UserRole.PURCHASER)
 
 @router.post(
     "",
@@ -29,7 +32,7 @@ router = APIRouter()
 async def create_grn(
     payload: GRNCreate,
     db: AsyncSession = Depends(get_db),
-    _current_user=Depends(get_current_user),
+    _current_user=Depends(_purchase_roles),
 ):
     """
     Create a Goods Receipt Note for a Purchase Order.

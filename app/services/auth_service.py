@@ -78,7 +78,7 @@ async def register_user(db: AsyncSession, payload: RegisterRequest) -> TokenResp
         email=payload.email.lower(),
         full_name=payload.full_name,
         hashed_password=hash_password(payload.password),
-        role=payload.role,
+        role=UserRole.VIEWER,
         phone=payload.phone,
         department=payload.department,
         is_active=True,

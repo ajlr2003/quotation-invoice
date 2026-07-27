@@ -28,6 +28,7 @@ if TYPE_CHECKING:
     from app.models.supplier import Supplier
     from app.models.supplier_quotation import SupplierQuotation
     from app.models.purchase_order import PurchaseOrder
+    from app.models.crm_lead import CrmLead
 
 
 # ── Association table: RFQ ↔ Supplier (many-to-many) ─────────────────────────
@@ -62,6 +63,9 @@ class RFQ(AuditMixin, Base):
 
     # ── Reference & status ────────────────────────────────────────────────────
     rfq_number: Mapped[str] = mapped_column(String(50), unique=True, nullable=False, index=True)
+    # Customer's own reference for this request (e.g. their SAP Ariba number or
+    # the number in their email) — distinct from our internally generated rfq_number.
+    customer_reference: Mapped[Optional[str]] = mapped_column(String(100), nullable=True)
     title: Mapped[str] = mapped_column(String(255), nullable=False)
     description: Mapped[Optional[str]] = mapped_column(Text)
     status: Mapped[RFQStatus] = mapped_column(
@@ -82,6 +86,17 @@ class RFQ(AuditMixin, Base):
         ForeignKey("suppliers.id", ondelete="SET NULL"), nullable=True, index=True
     )
 
+    # ── CRM lead link (optional) ───────────────────────────────────────────────
+    # A single customer lead can be split across multiple RFQs — one per
+    # supplier, since different line items may be sourced from different
+    # suppliers. Linking every RFQ back to the lead lets the CRM lead screen
+    # show all RFQs raised for that customer in one place, and lets a new RFQ
+    # inherit the customer's own reference number from the lead instead of
+    # requiring re-entry each time.
+    crm_lead_id: Mapped[Optional[uuid.UUID]] = mapped_column(
+        ForeignKey("crm_leads.id", ondelete="SET NULL"), nullable=True, index=True
+    )
+
     # ── Ownership ─────────────────────────────────────────────────────────────
     created_by_id: Mapped[uuid.UUID] = mapped_column(
         ForeignKey("users.id", ondelete="RESTRICT"), nullable=False, index=True
@@ -100,6 +115,9 @@ class RFQ(AuditMixin, Base):
     )
     selected_supplier: Mapped[Optional["Supplier"]] = relationship(
         "Supplier", foreign_keys=[selected_supplier_id], lazy="noload"
+    )
+    crm_lead: Mapped[Optional["CrmLead"]] = relationship(
+        "CrmLead", foreign_keys=[crm_lead_id], lazy="noload"
     )
     quotations: Mapped[List["Quotation"]] = relationship(
         "Quotation", back_populates="rfq"

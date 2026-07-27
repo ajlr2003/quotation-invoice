@@ -21,8 +21,10 @@ from sqlalchemy.ext.asyncio import AsyncSession
 from sqlalchemy.orm import selectinload
 
 from app.config import settings
-from app.models.enums import SalesOrderStatus, SalesQuotationStatus
+from app.models.enums import ActivityEntityType, SalesOrderStatus, SalesQuotationStatus
 from app.utils.email import send_email_with_pdf
+from app.models.crm_lead import CrmLead
+from app.models.rfq import RFQ
 from app.models.sales_order import SalesOrder
 from app.models.sales_order_item import SalesOrderItem
 from app.models.sales_quotation import SalesQuotation
@@ -34,6 +36,7 @@ from app.schemas.sales_quotation import (
     SalesQuotationResponse,
     SalesQuotationUpdate,
 )
+from app.services import activity_service
 
 # ── State-machine: allowed transitions between quotation statuses ─────────────
 # Sending (DRAFT → SENT) is handled separately by `send_quotation` to ensure
@@ -141,7 +144,12 @@ async def _load(db: AsyncSession, quote_id) -> SalesQuotation:
     result = await db.execute(
         select(SalesQuotation)
         .where(SalesQuotation.id == quote_id)
-        .options(selectinload(SalesQuotation.items))
+        .options(
+            selectinload(SalesQuotation.items),
+            selectinload(SalesQuotation.rfq),
+            selectinload(SalesQuotation.created_by),
+            selectinload(SalesQuotation.approved_by),
+        )
     )
     q = result.scalar_one_or_none()
     if q is None:
@@ -155,22 +163,29 @@ async def _load(db: AsyncSession, quote_id) -> SalesQuotation:
 # ── Public service functions ──────────────────────────────────────────────────
 
 async def create_quotation(
-    db: AsyncSession, payload: SalesQuotationCreate
+    db: AsyncSession, payload: SalesQuotationCreate, user_id=None
 ) -> SalesQuotationResponse:
     """Create a new SalesQuotation in DRAFT status.
 
-    Validates and filters items, computes server-side totals, generates a
-    sequential quote number, and persists the quotation + items.
+    Validates and filters items, computes server-side totals, and persists
+    the quotation + items. If ``payload.rfq_id`` is set, the quote number is
+    derived from the RFQ's own number (``QT`` + rfq_number) per the customer
+    quotation numbering rule; otherwise a sequential ``SQ-YYYY-NNNN`` number
+    is generated.
 
     Args:
         db:      Active async database session.
         payload: Validated create request from the router.
+        user_id: UUID of the authenticated user creating the quotation
+                 (stored as ``created_by_id``).
 
     Returns:
         The newly created quotation as a ``SalesQuotationResponse``.
 
     Raises:
         HTTPException: 400 if no valid line items remain after filtering.
+        HTTPException: 404 if ``rfq_id`` is given but no such RFQ exists.
+        HTTPException: 409 if a quotation already exists for that RFQ.
     """
     valid = _valid_items(payload.items)
     if not valid:
@@ -182,12 +197,33 @@ async def create_quotation(
             ),
         )
 
-    quote_number = await _next_quote_number(db)
+    rfq: Optional[RFQ] = None
+    if payload.rfq_id:
+        rfq_result = await db.execute(select(RFQ).where(RFQ.id == payload.rfq_id))
+        rfq = rfq_result.scalar_one_or_none()
+        if rfq is None:
+            raise HTTPException(
+                status_code=status.HTTP_404_NOT_FOUND,
+                detail="RFQ not found",
+            )
+        quote_number = f"QT{rfq.rfq_number}"
+        existing = await db.execute(
+            select(SalesQuotation.id).where(SalesQuotation.quote_number == quote_number)
+        )
+        if existing.scalar_one_or_none() is not None:
+            raise HTTPException(
+                status_code=status.HTTP_409_CONFLICT,
+                detail=f"A quotation ({quote_number}) already exists for this RFQ",
+            )
+    else:
+        quote_number = await _next_quote_number(db)
+
     subtotal, vat, total = _calc_totals(valid)
 
     q = SalesQuotation(
         quote_number=quote_number,
         date=payload.date or date.today(),
+        delivery_date=payload.delivery_date,
         currency=payload.currency,
         validity=payload.validity,
         delivery_time=(payload.delivery_time or "").strip() or None,
@@ -197,14 +233,27 @@ async def create_quotation(
         department=(payload.department or "").strip() or None,
         contact_person=(payload.contact_person or "").strip() or None,
         phone=(payload.phone or "").strip() or None,
+        fax=(payload.fax or "").strip() or None,
         email=(payload.email or "").strip() or None,
+        cc=(payload.cc or "").strip() or None,
+        your_ref=(payload.your_ref or "").strip() or None,
         subject=(payload.subject or "").strip() or "Sales Quotation",
+        invoice_address=(payload.invoice_address or "").strip() or None,
+        delivery_address=(payload.delivery_address or "").strip() or None,
         subtotal=subtotal,
         vat=vat,
         total=total,
         remarks=(payload.remarks or "").strip() or None,
         terms=(payload.terms or "").strip() or None,
+        oem=(payload.oem or "").strip() or None,
+        date_received=payload.date_received,
+        deadline=payload.deadline,
+        follow_up_date=payload.follow_up_date,
+        outcome=(payload.outcome or "").strip() or None,
         status=SalesQuotationStatus.DRAFT,
+        crm_lead_id=getattr(payload, "crm_lead_id", None),
+        rfq_id=payload.rfq_id,
+        created_by_id=user_id,
     )
     db.add(q)
     await db.flush()  # get q.id before adding items
@@ -226,6 +275,60 @@ async def create_quotation(
         ))
 
     await db.flush()
+
+    # Write quote_number (and RFQ reference numbers) back to the linked CRM
+    # lead so they surface in the CRM view without hunting through the RFQ
+    # or Quotation screens.
+    if q.crm_lead_id:
+        lead_result = await db.execute(
+            select(CrmLead).where(CrmLead.id == q.crm_lead_id)
+        )
+        lead = lead_result.scalar_one_or_none()
+        if lead:
+            lead.quote_number = quote_number
+            if rfq:
+                lead.rfq_number = rfq.rfq_number
+                lead.customer_reference = rfq.customer_reference
+
+    activity_service.log_activity(
+        db, ActivityEntityType.SALES_QUOTATION, q.id, "created",
+        f"Quotation {quote_number} created",
+        user_id=user_id,
+    )
+    await db.flush()
+
+    return await _to_response(db, q.id)
+
+
+async def approve_quotation(
+    db: AsyncSession, quote_id, user_id
+) -> SalesQuotationResponse:
+    """Stamp a quotation with the approving user and timestamp.
+
+    Deliberately independent of the status state machine — this is a simple
+    "who signed off on this" record, not a multi-level approval workflow.
+
+    Args:
+        db:       Active async database session.
+        quote_id: UUID of the quotation to approve.
+        user_id:  UUID of the approving user.
+
+    Returns:
+        The updated quotation as a ``SalesQuotationResponse``.
+    """
+    q = await _load(db, quote_id)
+    q.approved_by_id = user_id
+    q.approved_at = datetime.now(timezone.utc)
+    activity_service.log_activity(
+        db, ActivityEntityType.SALES_QUOTATION, q.id, "approved",
+        f"Quotation {q.quote_number} approved",
+        user_id=user_id,
+    )
+    await db.flush()
+    # The ``approved_by`` relationship was already loaded (as None) by the
+    # _load() call above — expire it so the reload below picks up the user
+    # we just assigned via the raw FK column.
+    db.expire(q, ["approved_by"])
     return await _to_response(db, q.id)
 
 
@@ -287,7 +390,12 @@ async def list_quotations(
     """
     stmt = (
         select(SalesQuotation)
-        .options(selectinload(SalesQuotation.items))
+        .options(
+            selectinload(SalesQuotation.items),
+            selectinload(SalesQuotation.rfq),
+            selectinload(SalesQuotation.created_by),
+            selectinload(SalesQuotation.approved_by),
+        )
         .order_by(SalesQuotation.created_at.desc())
     )
     if status_filter:
@@ -362,6 +470,7 @@ async def update_quotation(
 
     # ── Update header fields ──────────────────────────────────────────────────
     q.date = payload.date or q.date
+    q.delivery_date = payload.delivery_date
     q.currency = payload.currency
     q.validity = payload.validity
     q.delivery_time = (payload.delivery_time or "").strip() or None
@@ -371,15 +480,23 @@ async def update_quotation(
     q.department = (payload.department or "").strip() or None
     q.contact_person = (payload.contact_person or "").strip() or None
     q.phone = (payload.phone or "").strip() or None
+    q.fax = (payload.fax or "").strip() or None
     q.email = (payload.email or "").strip() or None
+    q.cc = (payload.cc or "").strip() or None
+    q.your_ref = (payload.your_ref or "").strip() or None
     q.subject = (payload.subject or "").strip() or "Sales Quotation"
+    q.invoice_address = (payload.invoice_address or "").strip() or None
+    q.delivery_address = (payload.delivery_address or "").strip() or None
     q.subtotal = subtotal
     q.vat = vat
     q.total = total
     q.remarks = (payload.remarks or "").strip() or None
     q.terms = (payload.terms or "").strip() or None
-    if payload.status in ("draft", "sent"):
-        q.status = SalesQuotationStatus(payload.status)
+    q.oem = (payload.oem or "").strip() or None
+    q.date_received = payload.date_received
+    q.deadline = payload.deadline
+    q.follow_up_date = payload.follow_up_date
+    q.outcome = (payload.outcome or "").strip() or None
 
     # ── Replace items (delete all, then re-insert) ────────────────────────────
     for old_item in list(q.items):
@@ -463,6 +580,41 @@ async def update_status(
     q.updated_by = user_id
     if new_status == SalesQuotationStatus.ACCEPTED:
         q.accepted_at = now
+    activity_service.log_activity(
+        db, ActivityEntityType.SALES_QUOTATION, q.id, "status_changed",
+        f"Status changed to {new_status.value}",
+        user_id=user_id,
+    )
+    await db.flush()
+    return await _to_response(db, q.id)
+
+
+async def update_tracking_fields(db: AsyncSession, quote_id, payload) -> SalesQuotationResponse:
+    """Update tracker-only fields (oem, deadline, follow-up, outcome, date received).
+
+    Unlike ``update_quotation``, this is allowed regardless of the
+    quotation's current status since these fields are typically filled in
+    after the quote has already been sent to the customer.
+
+    Args:
+        db:       Active async database session.
+        quote_id: UUID of the quotation.
+        payload:  ``SalesQuotationTrackingUpdate`` with the fields to set.
+
+    Returns:
+        The updated quotation as a ``SalesQuotationResponse``.
+    """
+    q = await _load(db, quote_id)
+    if payload.oem is not None:
+        q.oem = payload.oem.strip() or None
+    if payload.date_received is not None:
+        q.date_received = payload.date_received
+    if payload.deadline is not None:
+        q.deadline = payload.deadline
+    if payload.follow_up_date is not None:
+        q.follow_up_date = payload.follow_up_date
+    if payload.outcome is not None:
+        q.outcome = payload.outcome.strip() or None
     await db.flush()
     return await _to_response(db, q.id)
 
@@ -515,6 +667,7 @@ async def send_quotation(
 
     pdf_buf = _build_pdf(q)
 
+    email_warning: str | None = None
     try:
         await send_email_with_pdf(
             to_addr=q.email,
@@ -528,17 +681,24 @@ async def send_quotation(
             pdf_filename=f"{q.quote_number}.pdf",
         )
     except Exception as exc:
-        raise HTTPException(
-            status_code=status.HTTP_502_BAD_GATEWAY,
-            detail=f"Email failed: {exc}",
-        )
+        import logging
+        logging.getLogger(__name__).warning("Email delivery failed for %s: %s", q.quote_number, exc)
+        email_warning = str(exc)
 
-    # Only persist SENT status after successful email delivery
+    # Persist SENT status regardless of email outcome
     q.status = SalesQuotationStatus.SENT
     q.sent_at = datetime.now(timezone.utc)
     q.updated_by = user_id
+    activity_service.log_activity(
+        db, ActivityEntityType.SALES_QUOTATION, q.id, "status_changed",
+        f"Quotation sent to {q.email}" if not email_warning else f"Quotation marked sent (email delivery failed: {q.email})",
+        user_id=user_id,
+    )
     await db.flush()
-    return await _to_response(db, q.id)
+    resp = await _to_response(db, q.id)
+    if email_warning:
+        resp.email_warning = f"Status updated to Sent but email could not be delivered: {email_warning}"
+    return resp
 
 
 async def convert_to_order(

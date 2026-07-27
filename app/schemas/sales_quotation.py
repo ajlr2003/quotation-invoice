@@ -60,6 +60,7 @@ class SalesQuotationCreate(BaseModel):
     """Request body for creating a new SalesQuotation."""
 
     date: Optional[_Date] = None
+    delivery_date: Optional[_Date] = None
     currency: str = "SAR"
     validity: Optional[str] = None
     delivery_time: Optional[str] = None
@@ -74,9 +75,18 @@ class SalesQuotationCreate(BaseModel):
     cc: Optional[str] = None
     your_ref: Optional[str] = None
     subject: Optional[str] = None
+    invoice_address: Optional[str] = None
+    delivery_address: Optional[str] = None
     remarks: Optional[str] = None
     terms: Optional[str] = None
+    oem: Optional[str] = None
+    date_received: Optional[_Date] = None
+    deadline: Optional[_Date] = None
+    follow_up_date: Optional[_Date] = None
+    outcome: Optional[str] = None
     items: List[SalesQuotationItemCreate] = Field(min_length=1)
+    crm_lead_id: Optional[uuid.UUID] = None  # link this quote to a CRM lead
+    rfq_id: Optional[uuid.UUID] = None  # link this quote to its originating RFQ
 
     @field_validator("email")
     @classmethod
@@ -123,6 +133,7 @@ class SalesQuotationUpdate(BaseModel):
     """
 
     date: Optional[_Date] = None
+    delivery_date: Optional[_Date] = None
     currency: str = "SAR"
     validity: Optional[str] = None
     delivery_time: Optional[str] = None
@@ -137,8 +148,15 @@ class SalesQuotationUpdate(BaseModel):
     cc: Optional[str] = None
     your_ref: Optional[str] = None
     subject: Optional[str] = None
+    invoice_address: Optional[str] = None
+    delivery_address: Optional[str] = None
     remarks: Optional[str] = None
     terms: Optional[str] = None
+    oem: Optional[str] = None
+    date_received: Optional[_Date] = None
+    deadline: Optional[_Date] = None
+    follow_up_date: Optional[_Date] = None
+    outcome: Optional[str] = None
     items: List[SalesQuotationItemCreate] = Field(min_length=1)
 
     @field_validator("email")
@@ -168,6 +186,7 @@ class SalesQuotationResponse(BaseModel):
     id: uuid.UUID
     quote_number: str
     date: Optional[_Date]
+    delivery_date: Optional[_Date] = None
     currency: str
     validity: Optional[str]
     delivery_time: Optional[str]
@@ -182,16 +201,34 @@ class SalesQuotationResponse(BaseModel):
     cc: Optional[str] = None
     your_ref: Optional[str] = None
     subject: Optional[str]
+    invoice_address: Optional[str] = None
+    delivery_address: Optional[str] = None
     subtotal: float
     vat: float
     total: float
     remarks: Optional[str]
     terms: Optional[str]
+    oem: Optional[str] = None
+    date_received: Optional[_Date] = None
+    deadline: Optional[_Date] = None
+    follow_up_date: Optional[_Date] = None
+    outcome: Optional[str] = None
     status: str
+    payment_status: str = "unpaid"
+    email_warning: Optional[str] = None
     sent_at: Optional[datetime] = None
     accepted_at: Optional[datetime] = None
     converted_at: Optional[datetime] = None
     updated_by: Optional[uuid.UUID] = None
+    crm_lead_id: Optional[uuid.UUID] = None
+    rfq_id: Optional[uuid.UUID] = None
+    rfq_number: Optional[str] = None
+    customer_reference: Optional[str] = None
+    created_by_id: Optional[uuid.UUID] = None
+    created_by_name: Optional[str] = None
+    approved_by_id: Optional[uuid.UUID] = None
+    approved_by_name: Optional[str] = None
+    approved_at: Optional[datetime] = None
     items: List[SalesQuotationItemResponse] = []
     created_at: datetime
     updated_at: datetime
@@ -202,6 +239,21 @@ class SalesQuotationStatusUpdate(BaseModel):
     """Request body for PATCH /quotations/{id}/status."""
 
     status: str
+
+
+class SalesQuotationTrackingUpdate(BaseModel):
+    """Request body for PATCH /quotations/{id}/tracking.
+
+    Tracker fields (deadline, follow-up date, outcome) are typically filled
+    in after a quotation has already been sent, so — unlike the full
+    ``PUT /{id}`` update — this is allowed regardless of quotation status.
+    """
+
+    oem: Optional[str] = None
+    date_received: Optional[_Date] = None
+    deadline: Optional[_Date] = None
+    follow_up_date: Optional[_Date] = None
+    outcome: Optional[str] = None
 
 
 class SalesQuotationListResponse(BaseModel):

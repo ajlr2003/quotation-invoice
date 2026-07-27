@@ -21,6 +21,7 @@ from app.models.base import AuditMixin
 if TYPE_CHECKING:
     from app.models.rfq import RFQ
     from app.models.supplier import Supplier
+    from app.models.supplier_quotation_item import SupplierQuotationItem
 
 
 class SupplierQuotation(AuditMixin, Base):
@@ -60,6 +61,12 @@ class SupplierQuotation(AuditMixin, Base):
     rfq: Mapped["RFQ"] = relationship("RFQ", back_populates="supplier_quotations")
     supplier: Mapped["Supplier"] = relationship(
         "Supplier", back_populates="supplier_quotations"
+    )
+    items: Mapped[list["SupplierQuotationItem"]] = relationship(
+        "SupplierQuotationItem",
+        back_populates="quotation",
+        cascade="all, delete-orphan",
+        order_by="SupplierQuotationItem.created_at",
     )
 
     def __repr__(self) -> str:

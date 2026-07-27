@@ -32,7 +32,8 @@ from fastapi import APIRouter, Depends, File, Query, UploadFile
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from app.database import get_db
-from app.middleware.auth import get_current_user
+from app.middleware.auth import get_current_user, require_roles
+from app.models.enums import UserRole
 from app.schemas.accounting import (
     AccountCreate,
     AccountingKPIResponse,
@@ -42,6 +43,7 @@ from app.schemas.accounting import (
     BankAccountResponse,
     BankTransactionListResponse,
     CashFlowReport,
+    CashFlowTrendReport,
     ClosedPeriodResponse,
     ClosePeriodPreview,
     ClosePeriodRequest,
@@ -55,6 +57,8 @@ from app.schemas.accounting import (
 from app.services import accounting_service
 
 router = APIRouter()
+
+_finance_roles = require_roles(UserRole.ADMIN, UserRole.MANAGER, UserRole.FINANCE)
 
 
 # =============================================================================
@@ -108,7 +112,7 @@ async def list_accounts(
 async def create_account(
     payload: AccountCreate,
     db: AsyncSession = Depends(get_db),
-    _=Depends(get_current_user),
+    _=Depends(_finance_roles),
 ):
     return await accounting_service.create_account(db, payload)
 
@@ -145,7 +149,7 @@ async def list_journal_entries(
 async def create_journal_entry(
     payload: JournalEntryCreate,
     db: AsyncSession = Depends(get_db),
-    _=Depends(get_current_user),
+    _=Depends(_finance_roles),
 ):
     return await accounting_service.create_journal_entry(db, payload)
 
@@ -163,7 +167,7 @@ async def create_journal_entry(
 async def post_journal_entry(
     entry_id: uuid.UUID,
     db: AsyncSession = Depends(get_db),
-    _=Depends(get_current_user),
+    _=Depends(_finance_roles),
 ):
     return await accounting_service.post_journal_entry(db, entry_id)
 
@@ -217,7 +221,7 @@ async def import_bank_statement(
     bank_account_id: uuid.UUID,
     file: UploadFile = File(...),
     db: AsyncSession = Depends(get_db),
-    _=Depends(get_current_user),
+    _=Depends(_finance_roles),
 ):
     return await accounting_service.import_bank_statement(db, bank_account_id, file)
 
@@ -235,7 +239,7 @@ async def reconcile_transactions(
     bank_account_id: uuid.UUID,
     payload: ReconcileRequest,
     db: AsyncSession = Depends(get_db),
-    _=Depends(get_current_user),
+    _=Depends(_finance_roles),
 ):
     return await accounting_service.reconcile_transactions(db, bank_account_id, payload)
 
@@ -277,7 +281,7 @@ async def close_period_preview(
 async def close_period(
     payload: ClosePeriodRequest,
     db: AsyncSession = Depends(get_db),
-    current_user=Depends(get_current_user),
+    current_user=Depends(_finance_roles),
 ):
     return await accounting_service.close_period(db, payload, user_id=current_user.id)
 
@@ -362,3 +366,20 @@ async def report_cash_flow(
     _=Depends(get_current_user),
 ):
     return await accounting_service.get_cash_flow(db)
+
+
+@router.get(
+    "/reports/cash-flow-trend",
+    response_model=CashFlowTrendReport,
+    summary="Monthly cash flow trend (last 6 months) + reconciliation rate",
+    description=(
+        "Real monthly inflow/outflow series from imported bank transactions, "
+        "used for trend charts instead of illustrative data. Also returns the "
+        "bank-reconciliation rate as an honest data-health signal."
+    ),
+)
+async def report_cash_flow_trend(
+    db: AsyncSession = Depends(get_db),
+    _=Depends(get_current_user),
+):
+    return await accounting_service.get_cash_flow_trend(db)

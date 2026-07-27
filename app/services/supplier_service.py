@@ -13,13 +13,18 @@ from fastapi import HTTPException, status
 from sqlalchemy import select, func, or_
 from sqlalchemy.ext.asyncio import AsyncSession
 
+from app.models.enums import ActivityEntityType
+from app.models.rfq import RFQ, rfq_suppliers
+from app.models.rfq_item import RFQItem
 from app.models.supplier import Supplier
+from app.schemas.rfq import RFQListResponse, RFQSummaryResponse
 from app.schemas.supplier import (
     SupplierCreateRequest,
     SupplierUpdateRequest,
     SupplierResponse,
     SupplierListResponse,
 )
+from app.services import activity_service
 
 
 # ---------------------------------------------------------------------------
@@ -44,6 +49,7 @@ async def _get_supplier_or_404(db: AsyncSession, supplier_id: uuid.UUID) -> Supp
 async def create_supplier(
     db: AsyncSession,
     payload: SupplierCreateRequest,
+    user_id: Optional[uuid.UUID] = None,
 ) -> SupplierResponse:
     # Check for duplicate email
     existing = await db.execute(
@@ -60,6 +66,12 @@ async def create_supplier(
         email=payload.email.lower(),
     )
     db.add(supplier)
+    await db.flush()
+    activity_service.log_activity(
+        db, ActivityEntityType.SUPPLIER, supplier.id, "created",
+        f"Supplier '{supplier.company_name}' added",
+        user_id=user_id,
+    )
     await db.flush()
     return SupplierResponse.model_validate(supplier)
 
@@ -139,6 +151,7 @@ async def update_supplier(
     db: AsyncSession,
     supplier_id: uuid.UUID,
     payload: SupplierUpdateRequest,
+    user_id: Optional[uuid.UUID] = None,
 ) -> SupplierResponse:
     supplier = await _get_supplier_or_404(db, supplier_id)
 
@@ -160,11 +173,69 @@ async def update_supplier(
                 )
         update_data["email"] = new_email
 
+    changed_fields = [f for f in update_data if getattr(supplier, f) != update_data[f]]
     for field, value in update_data.items():
         setattr(supplier, field, value)
 
+    if changed_fields:
+        activity_service.log_activity(
+            db, ActivityEntityType.SUPPLIER, supplier.id, "updated",
+            f"Updated: {', '.join(changed_fields)}",
+            user_id=user_id,
+        )
+
     await db.flush()
+    # updated_at is server-managed (onupdate=func.now()) and left expired
+    # after flush — refresh explicitly so Pydantic doesn't trigger an
+    # implicit lazy-load, which raises MissingGreenlet under async sessions.
+    await db.refresh(supplier)
     return SupplierResponse.model_validate(supplier)
+
+
+# ---------------------------------------------------------------------------
+# RFQs this supplier has been invited to
+# ---------------------------------------------------------------------------
+
+async def list_supplier_rfqs(
+    db: AsyncSession,
+    supplier_id: uuid.UUID,
+) -> RFQListResponse:
+    """Return every RFQ this supplier was invited to, most recent first.
+
+    Mirrors the equivalent supplier-facing view of a vendor's "Purchases"
+    smart button — lets the supplier detail screen show their full RFQ
+    history without a separate lookup.
+    """
+    await _get_supplier_or_404(db, supplier_id)
+
+    result = await db.execute(
+        select(RFQ)
+        .join(rfq_suppliers, rfq_suppliers.c.rfq_id == RFQ.id)
+        .where(rfq_suppliers.c.supplier_id == supplier_id)
+        .order_by(RFQ.created_at.desc())
+    )
+    rfqs = result.scalars().all()
+
+    if rfqs:
+        rfq_ids = [r.id for r in rfqs]
+        count_q = await db.execute(
+            select(RFQItem.rfq_id, func.count(RFQItem.id).label("cnt"))
+            .where(RFQItem.rfq_id.in_(rfq_ids))
+            .group_by(RFQItem.rfq_id)
+        )
+        counts = {row.rfq_id: row.cnt for row in count_q}
+    else:
+        counts = {}
+
+    summaries = []
+    for rfq in rfqs:
+        s = RFQSummaryResponse.model_validate(rfq)
+        s.item_count = counts.get(rfq.id, 0)
+        summaries.append(s)
+
+    return RFQListResponse(
+        items=summaries, total=len(summaries), page=1, page_size=len(summaries) or 1, pages=1,
+    )
 
 
 # ---------------------------------------------------------------------------
@@ -174,6 +245,7 @@ async def update_supplier(
 async def delete_supplier(
     db: AsyncSession,
     supplier_id: uuid.UUID,
+    user_id: Optional[uuid.UUID] = None,
 ) -> dict:
     supplier = await _get_supplier_or_404(db, supplier_id)
 
@@ -197,5 +269,10 @@ async def delete_supplier(
         )
 
     supplier.is_active = False
+    activity_service.log_activity(
+        db, ActivityEntityType.SUPPLIER, supplier.id, "deactivated",
+        f"Supplier '{supplier.company_name}' deactivated",
+        user_id=user_id,
+    )
     await db.flush()
     return {"message": f"Supplier '{supplier.company_name}' has been deactivated."}

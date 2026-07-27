@@ -15,18 +15,21 @@ from sqlalchemy import exists, func, insert, or_, select
 from sqlalchemy.ext.asyncio import AsyncSession
 from sqlalchemy.orm import selectinload
 
-from app.models.enums import RFQStatus
+from app.models.crm_lead import CrmLead
+from app.models.enums import ActivityEntityType, RFQStatus
 from app.models.purchase_order import PurchaseOrder
 from app.models.rfq import RFQ, rfq_suppliers
 from app.models.rfq_item import RFQItem
 from app.models.supplier import Supplier
 from app.models.user import User
 from app.models.supplier_quotation import SupplierQuotation
+from app.services import activity_service
 from app.schemas.rfq import (
     RFQCreateRequest,
     RFQItemCreateRequest,
     RFQItemListResponse,
     RFQItemResponse,
+    RFQKpiResponse,
     RFQListResponse,
     RFQResponse,
     RFQSummaryResponse,
@@ -149,8 +152,24 @@ async def create_rfq(
 ) -> RFQResponse:
     rfq_number = await _generate_rfq_number(db)
 
+    # A lead's customer reference number is entered once (at lead intake) and
+    # inherited by every RFQ raised under that lead — since one lead's items
+    # are often split across several supplier RFQs, this avoids re-typing the
+    # same customer number on each one. An explicit customer_reference in the
+    # payload still wins.
+    customer_reference = payload.customer_reference
+    if payload.crm_lead_id and not customer_reference:
+        lead_result = await db.execute(
+            select(CrmLead).where(CrmLead.id == payload.crm_lead_id)
+        )
+        lead = lead_result.scalar_one_or_none()
+        if lead:
+            customer_reference = lead.customer_reference
+
     rfq = RFQ(
         rfq_number=rfq_number,
+        customer_reference=customer_reference,
+        crm_lead_id=payload.crm_lead_id,
         title=payload.title,
         description=payload.description,
         currency=payload.currency,
@@ -179,6 +198,12 @@ async def create_rfq(
                 **item_payload.model_dump(),
             )
             db.add(item)
+
+    activity_service.log_activity(
+        db, ActivityEntityType.RFQ, rfq.id, "created",
+        f"RFQ {rfq_number} created" + (f" for {len(payload.supplier_ids)} supplier(s)" if payload.supplier_ids else ""),
+        user_id=current_user.id,
+    )
 
     await db.flush()
     # Capture id before expiring, then expire so selectinload re-fetches suppliers
@@ -267,6 +292,60 @@ async def list_rfqs(
 # RFQ — Get by ID
 # ---------------------------------------------------------------------------
 
+async def get_rfq_kpis(db: AsyncSession) -> RFQKpiResponse:
+    """Compute RFQ pipeline health counts for the Purchases landing page.
+
+    All counts are derived from data already tracked (status, deadline,
+    PO creation timestamps) — no new columns required.
+
+    Args:
+        db: Active async database session.
+
+    Returns:
+        RFQKpiResponse with draft/sent/awaiting_evaluation/awarded/late
+        counts and the average days between RFQ creation and PO creation.
+    """
+    today = date.today()
+
+    async def _count(*conditions) -> int:
+        result = await db.execute(
+            select(func.count()).select_from(RFQ).where(*conditions)
+        )
+        return result.scalar_one()
+
+    draft = await _count(RFQ.status == RFQStatus.DRAFT)
+    sent = await _count(RFQ.status == RFQStatus.SENT)
+    awaiting_evaluation = await _count(
+        RFQ.status.in_([RFQStatus.RECEIVED, RFQStatus.EVALUATED])
+    )
+    awarded = await _count(RFQ.status == RFQStatus.AWARDED)
+    late = await _count(
+        RFQ.deadline.is_not(None),
+        RFQ.deadline < today,
+        RFQ.status.not_in([RFQStatus.CLOSED, RFQStatus.CANCELLED, RFQStatus.AWARDED]),
+    )
+
+    # Average days between RFQ creation and its PO being raised, across all
+    # RFQs that already have a PO.
+    avg_result = await db.execute(
+        select(
+            func.avg(
+                func.extract("epoch", PurchaseOrder.created_at - RFQ.created_at) / 86400.0
+            )
+        ).select_from(PurchaseOrder).join(RFQ, RFQ.id == PurchaseOrder.rfq_id)
+    )
+    avg_days = avg_result.scalar_one()
+
+    return RFQKpiResponse(
+        draft=draft,
+        sent=sent,
+        awaiting_evaluation=awaiting_evaluation,
+        awarded=awarded,
+        late=late,
+        avg_days_to_po=round(float(avg_days), 1) if avg_days is not None else None,
+    )
+
+
 async def get_rfq(db: AsyncSession, rfq_id: uuid.UUID) -> RFQResponse:
     rfq = await _get_rfq_or_404(db, rfq_id)
     po = await _get_po_for_rfq(db, rfq_id)
@@ -289,7 +368,8 @@ async def update_rfq(
 
     # Handle status transition separately
     new_status = update_data.pop("status", None)
-    if new_status and new_status != rfq.status:
+    status_changed = bool(new_status and new_status != rfq.status)
+    if status_changed:
         _assert_transition(rfq, new_status)
         rfq.status = new_status
     elif update_data:
@@ -307,6 +387,13 @@ async def update_rfq(
 
     for field, value in update_data.items():
         setattr(rfq, field, value)
+
+    if status_changed:
+        activity_service.log_activity(
+            db, ActivityEntityType.RFQ, rfq.id, "status_changed",
+            f"Status changed to {new_status.value if hasattr(new_status, 'value') else new_status}",
+            user_id=current_user.id,
+        )
 
     await db.flush()
     rfq_full = await _get_rfq_or_404(db, rfq_id)
@@ -343,6 +430,11 @@ async def send_rfq(
     rfq = await _get_rfq_or_404(db, rfq_id)
     _assert_transition(rfq, RFQStatus.SENT)  # enforces draft-only rule
     rfq.status = RFQStatus.SENT
+    activity_service.log_activity(
+        db, ActivityEntityType.RFQ, rfq.id, "status_changed",
+        f"RFQ sent to {len(rfq.suppliers)} supplier(s)" if rfq.suppliers else "RFQ sent",
+        user_id=current_user.id,
+    )
     await db.flush()
     rfq_full = await _get_rfq_or_404(db, rfq_id)
     return RFQResponse.from_orm_with_count(rfq_full)
@@ -488,6 +580,13 @@ async def select_supplier(
 
     rfq.selected_supplier_id = payload.supplier_id
     rfq.status = RFQStatus.AWARDED
+    supplier_result = await db.execute(select(Supplier.company_name).where(Supplier.id == payload.supplier_id))
+    supplier_name = supplier_result.scalar_one_or_none() or "supplier"
+    activity_service.log_activity(
+        db, ActivityEntityType.RFQ, rfq.id, "supplier_selected",
+        f"{supplier_name} selected and RFQ awarded",
+        user_id=current_user.id,
+    )
     await db.flush()
 
     # Reload with all relationships — populate_existing forces SQLAlchemy to

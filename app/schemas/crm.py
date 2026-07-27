@@ -32,6 +32,10 @@ class CrmLeadCreate(BaseModel):
     source: Optional[str] = Field(None, max_length=100, description="Lead source: website, referral, cold_outreach, trade_show, linkedin")
     owner: Optional[str] = Field(None, max_length=255, description="Salesperson name responsible for this lead")
     stage: CrmLeadStage = Field(CrmLeadStage.NEW_LEADS, description="Initial pipeline stage")
+    customer_reference: Optional[str] = Field(
+        None, max_length=100,
+        description="The customer's own reference/lead number (e.g. their internal number), entered once here and inherited by every RFQ raised under this lead",
+    )
     notes: Optional[str] = None
 
 
@@ -57,6 +61,8 @@ class CrmLeadResponse(BaseModel):
     owner: Optional[str]
     stage: CrmLeadStage
     quote_number: Optional[str]
+    rfq_number: Optional[str] = None
+    customer_reference: Optional[str] = None
     notes: Optional[str]
     created_at: datetime
     updated_at: datetime
@@ -66,6 +72,33 @@ class CrmLeadListResponse(BaseModel):
     """Paginated list of CRM leads."""
 
     items: List[CrmLeadResponse]
+    total: int
+
+
+# =============================================================================
+# Lead → RFQ traceability
+# =============================================================================
+
+class LeadRfqSummary(BaseModel):
+    """Lightweight RFQ summary shown on a lead's detail view.
+
+    A single lead's items are often split across multiple supplier RFQs, so
+    this lets the lead screen show every RFQ raised for that customer in one
+    place instead of hunting through the RFQ list.
+    """
+
+    model_config = ConfigDict(from_attributes=True)
+
+    id: uuid.UUID
+    rfq_number: str
+    customer_reference: Optional[str]
+    title: str
+    status: str
+    created_at: datetime
+
+
+class LeadRfqListResponse(BaseModel):
+    items: List[LeadRfqSummary]
     total: int
 
 

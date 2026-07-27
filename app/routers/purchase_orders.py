@@ -9,12 +9,14 @@
 # =============================================================================
 
 import uuid
+from typing import Optional
 
-from fastapi import APIRouter, Depends, status
+from fastapi import APIRouter, Depends, Query, status
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from app.database import get_db
-from app.middleware.auth import get_current_user
+from app.middleware.auth import get_current_user, require_roles
+from app.models.enums import UserRole
 from app.schemas.purchase_order import (
     PurchaseOrderCreate,
     PurchaseOrderListResponse,
@@ -24,6 +26,8 @@ from app.services import purchase_order_service
 
 router = APIRouter()
 
+_purchase_roles = require_roles(UserRole.ADMIN, UserRole.MANAGER, UserRole.PURCHASER)
+
 
 @router.get(
     "",
@@ -31,11 +35,13 @@ router = APIRouter()
     summary="List all purchase orders",
 )
 async def list_purchase_orders(
+    supplier_id: Optional[uuid.UUID] = Query(default=None, description="Filter to POs issued to this supplier"),
+    rfq_id: Optional[uuid.UUID] = Query(default=None, description="Filter to POs raised from this RFQ"),
     db: AsyncSession = Depends(get_db),
     _current_user=Depends(get_current_user),
 ):
     """Return all purchase orders ordered by creation date descending, including supplier name."""
-    return await purchase_order_service.list_purchase_orders(db)
+    return await purchase_order_service.list_purchase_orders(db, supplier_id=supplier_id, rfq_id=rfq_id)
 
 
 @router.post(
@@ -47,7 +53,7 @@ async def list_purchase_orders(
 async def create_purchase_order(
     payload: PurchaseOrderCreate,
     db: AsyncSession = Depends(get_db),
-    _current_user=Depends(get_current_user),
+    _current_user=Depends(_purchase_roles),
 ):
     """
     Issue a purchase order against an awarded RFQ.

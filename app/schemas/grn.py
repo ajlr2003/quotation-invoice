@@ -22,6 +22,7 @@ class GRNResponse(BaseModel):
     supplier_name: str
     po_reference: Optional[str] = None
     received_quantity: int
+    ordered_quantity: float = 0
     created_at: datetime
 
     model_config = {"from_attributes": True}

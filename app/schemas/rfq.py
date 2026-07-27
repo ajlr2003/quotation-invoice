@@ -63,6 +63,8 @@ class RFQItemListResponse(BaseModel):
 class RFQCreateRequest(BaseModel):
     title: str                          = Field(min_length=2, max_length=255)
     description: Optional[str]          = None
+    customer_reference: Optional[str]   = Field(default=None, max_length=100)
+    crm_lead_id: Optional[uuid.UUID]    = Field(default=None)
     currency: str                       = Field(default="USD", min_length=3, max_length=3)
     issue_date: Optional[date]          = None
     deadline: Optional[date]            = None
@@ -86,6 +88,7 @@ class RFQCreateRequest(BaseModel):
 class RFQUpdateRequest(BaseModel):
     title: Optional[str]                = Field(default=None, min_length=2, max_length=255)
     description: Optional[str]          = None
+    customer_reference: Optional[str]   = Field(default=None, max_length=100)
     currency: Optional[str]             = Field(default=None, min_length=3, max_length=3)
     issue_date: Optional[date]          = None
     deadline: Optional[date]            = None
@@ -126,6 +129,8 @@ class RFQCreatedByResponse(BaseModel):
 class RFQResponse(BaseModel):
     id: uuid.UUID
     rfq_number: str
+    customer_reference: Optional[str]
+    crm_lead_id: Optional[uuid.UUID] = None
     title: str
     description: Optional[str]
     status: RFQStatus
@@ -160,6 +165,8 @@ class RFQSummaryResponse(BaseModel):
     """Lighter version used in list view — no nested items."""
     id: uuid.UUID
     rfq_number: str
+    customer_reference: Optional[str]
+    crm_lead_id: Optional[uuid.UUID] = None
     title: str
     status: RFQStatus
     currency: str
@@ -180,3 +187,22 @@ class RFQListResponse(BaseModel):
     page: int
     page_size: int
     pages: int
+
+
+# ============================================================================
+# RFQ dashboard KPIs
+# ============================================================================
+
+class RFQKpiResponse(BaseModel):
+    """Snapshot of RFQ pipeline health for the Purchases landing page.
+
+    ``avg_days_to_po`` is the average number of days between an RFQ being
+    created and the purchase order being raised against it, computed only
+    over RFQs that already have a PO. ``None`` if no POs exist yet.
+    """
+    draft: int
+    sent: int
+    awaiting_evaluation: int   # status in {received, evaluated}
+    awarded: int
+    late: int                 # deadline passed, not yet closed/cancelled/awarded
+    avg_days_to_po: Optional[float] = None

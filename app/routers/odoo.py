@@ -23,14 +23,21 @@ import logging
 from datetime import date, datetime, timezone
 from typing import Any, Optional
 
+import httpx
+
 from fastapi import APIRouter, Depends, HTTPException, Query, status
+from fastapi.responses import Response
 from pydantic import BaseModel
 
+from app.config import settings
 from app.integrations.odoo_client import odoo
-from app.middleware.auth import get_current_user
+from app.middleware.auth import get_current_user, require_roles
+from app.models.enums import UserRole
 
 logger = logging.getLogger(__name__)
 router = APIRouter()
+
+_finance_roles = require_roles(UserRole.ADMIN, UserRole.MANAGER, UserRole.FINANCE)
 
 # ── Odoo field lists ──────────────────────────────────────────────────────────
 _INVOICE_FIELDS = [
@@ -252,7 +259,7 @@ class InvoiceCreateRequest(BaseModel):
 )
 async def create_invoice(
     payload: InvoiceCreateRequest,
-    _=Depends(get_current_user),
+    _=Depends(_finance_roles),
 ) -> dict:
     try:
         # Resolve or create Odoo partner
@@ -314,7 +321,7 @@ async def create_invoice(
 )
 async def confirm_invoice(
     invoice_id: int,
-    _=Depends(get_current_user),
+    _=Depends(_finance_roles),
 ) -> dict:
     try:
         await odoo.action("account.move", "action_post", [invoice_id])
@@ -332,6 +339,86 @@ async def confirm_invoice(
 
 
 # =============================================================================
+# Invoice PDF download
+# =============================================================================
+
+@router.get(
+    "/invoices/{invoice_id}/pdf",
+    summary="Download invoice PDF from Odoo",
+    response_class=Response,
+)
+async def download_invoice_pdf(
+    invoice_id: int,
+    _=Depends(get_current_user),
+) -> Response:
+    """Fetch the invoice PDF from Odoo via its HTTP report controller.
+
+    Odoo SaaS 17+ removed render_qweb_pdf from XML-RPC. We authenticate
+    via the JSON-RPC session endpoint, grab the session cookie, then fetch
+    the PDF through /report/pdf/account.report_invoice/{id}.
+    """
+    import base64
+
+    try:
+        async with httpx.AsyncClient(timeout=60, follow_redirects=True) as client:
+
+            # Step 1 — authenticate via Odoo web session using the account password
+            password = settings.ODOO_PASSWORD
+            if not password:
+                raise RuntimeError(
+                    "ODOO_PASSWORD is not set in .env — add it to enable PDF downloads. "
+                    "Use your Odoo login password (same one you use at kytos1.odoo.com)."
+                )
+
+            auth = await client.post(
+                f"{odoo._url}/web/session/authenticate",
+                json={
+                    "jsonrpc": "2.0", "method": "call", "id": 1,
+                    "params": {
+                        "db":       odoo._db,
+                        "login":    odoo._login,
+                        "password": password,
+                    },
+                },
+                headers={"Content-Type": "application/json"},
+            )
+            auth.raise_for_status()
+            auth_result = auth.json().get("result", {})
+            if not auth_result.get("uid"):
+                raise RuntimeError("Odoo session auth failed — check ODOO_PASSWORD in .env")
+
+            session_id = auth.cookies.get("session_id")
+            if not session_id:
+                raise RuntimeError("Odoo did not return a session cookie")
+
+            # Step 2 — fetch the PDF using the session cookie
+            pdf_resp = await client.get(
+                f"{odoo._url}/report/pdf/account.report_invoice/{invoice_id}",
+                cookies={"session_id": session_id},
+            )
+            pdf_resp.raise_for_status()
+
+            ct = pdf_resp.headers.get("content-type", "")
+            if "application/pdf" not in ct:
+                raise RuntimeError(
+                    f"Odoo returned non-PDF response ({pdf_resp.status_code}): {pdf_resp.text[:200]}"
+                )
+
+            return Response(
+                content=pdf_resp.content,
+                media_type="application/pdf",
+                headers={
+                    "Content-Disposition": f'attachment; filename="invoice-{invoice_id}.pdf"',
+                    "Content-Length": str(len(pdf_resp.content)),
+                },
+            )
+
+    except Exception as e:
+        logger.error("Odoo PDF download failed for invoice %s: %s", invoice_id, e)
+        raise HTTPException(status_code=502, detail=f"Could not generate PDF: {e}")
+
+
+# =============================================================================
 # Partners (for client autocomplete)
 # =============================================================================
 
@@ -345,9 +432,11 @@ async def list_partners(
     _=Depends(get_current_user),
 ) -> list[dict]:
     try:
-        domain: list[Any] = [["customer_rank", ">", 0]]
+        domain: list[Any] = [["active", "=", True]]
         if q:
             domain.append(["name", "ilike", q])
+        else:
+            domain.append(["is_company", "=", True])
         records = await odoo.search_read(
             "res.partner", domain, ["id", "name", "email", "phone"], limit=30
         )

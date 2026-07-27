@@ -6,6 +6,7 @@
 # =============================================================================
 
 import uuid
+from typing import Optional
 
 from fastapi import HTTPException, status
 from sqlalchemy import exists, func, select
@@ -202,12 +203,21 @@ async def get_purchase_order(
 # List all POs
 # ---------------------------------------------------------------------------
 
-async def list_purchase_orders(db: AsyncSession) -> PurchaseOrderListResponse:
-    result = await db.execute(
+async def list_purchase_orders(
+    db: AsyncSession,
+    supplier_id: Optional[uuid.UUID] = None,
+    rfq_id: Optional[uuid.UUID] = None,
+) -> PurchaseOrderListResponse:
+    query = (
         select(PurchaseOrder, Supplier.company_name)
         .join(Supplier, Supplier.id == PurchaseOrder.supplier_id)
         .order_by(PurchaseOrder.created_at.desc())
     )
+    if supplier_id:
+        query = query.where(PurchaseOrder.supplier_id == supplier_id)
+    if rfq_id:
+        query = query.where(PurchaseOrder.rfq_id == rfq_id)
+    result = await db.execute(query)
     rows = result.all()
 
     items = []

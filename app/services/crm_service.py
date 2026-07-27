@@ -8,20 +8,25 @@
 from __future__ import annotations
 
 import uuid
+from typing import Optional
 
 from fastapi import HTTPException, status
 from sqlalchemy import func, select
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from app.models.crm_lead import CrmLead
-from app.models.enums import CrmLeadStage
+from app.models.enums import ActivityEntityType, CrmLeadStage
+from app.models.rfq import RFQ
 from app.schemas.crm import (
     CrmKPIResponse,
     CrmLeadCreate,
     CrmLeadListResponse,
     CrmLeadResponse,
     CrmLeadStageUpdate,
+    LeadRfqListResponse,
+    LeadRfqSummary,
 )
+from app.services import activity_service
 
 
 # =============================================================================
@@ -98,25 +103,37 @@ async def list_leads(db: AsyncSession) -> CrmLeadListResponse:
     )
 
 
-async def create_lead(db: AsyncSession, payload: CrmLeadCreate) -> CrmLeadResponse:
+async def create_lead(
+    db: AsyncSession, payload: CrmLeadCreate, user_id: Optional[uuid.UUID] = None
+) -> CrmLeadResponse:
     """Create a new CRM lead.
 
     Args:
         db:      Async database session.
         payload: Validated lead creation payload.
+        user_id: UUID of the acting user, if any.
 
     Returns:
         CrmLeadResponse for the newly created lead.
     """
     lead = CrmLead(**payload.model_dump())
     db.add(lead)
+    await db.flush()
+    activity_service.log_activity(
+        db, ActivityEntityType.CRM_LEAD, lead.id, "created",
+        f"Lead '{lead.company}' added to pipeline",
+        user_id=user_id,
+    )
     await db.commit()
     await db.refresh(lead)
     return CrmLeadResponse.model_validate(lead)
 
 
 async def update_stage(
-    db: AsyncSession, lead_id: uuid.UUID, payload: CrmLeadStageUpdate
+    db: AsyncSession,
+    lead_id: uuid.UUID,
+    payload: CrmLeadStageUpdate,
+    user_id: Optional[uuid.UUID] = None,
 ) -> CrmLeadResponse:
     """Move a lead to a new pipeline stage.
 
@@ -124,6 +141,7 @@ async def update_stage(
         db:      Async database session.
         lead_id: UUID of the lead to update.
         payload: Contains the target ``stage`` value.
+        user_id: UUID of the acting user, if any.
 
     Returns:
         Updated CrmLeadResponse.
@@ -134,10 +152,48 @@ async def update_stage(
     lead = await db.get(CrmLead, lead_id)
     if not lead:
         raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="Lead not found")
+    old_stage = lead.stage
     lead.stage = payload.stage
+    if payload.stage != old_stage:
+        activity_service.log_activity(
+            db, ActivityEntityType.CRM_LEAD, lead.id, "stage_changed",
+            f"Moved from {old_stage.value} to {payload.stage.value}",
+            user_id=user_id,
+        )
     await db.commit()
     await db.refresh(lead)
     return CrmLeadResponse.model_validate(lead)
+
+
+async def list_lead_rfqs(db: AsyncSession, lead_id: uuid.UUID) -> LeadRfqListResponse:
+    """Return every RFQ linked to a lead, most recent first.
+
+    A lead's items are often split across several supplier RFQs, so this
+    lets the lead detail screen show all of them in one place instead of
+    hunting through the RFQ list.
+
+    Args:
+        db:      Async database session.
+        lead_id: UUID of the lead.
+
+    Returns:
+        LeadRfqListResponse containing matching RFQs and their total count.
+
+    Raises:
+        HTTPException 404: If no lead with ``lead_id`` exists.
+    """
+    lead = await db.get(CrmLead, lead_id)
+    if not lead:
+        raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="Lead not found")
+
+    result = await db.execute(
+        select(RFQ).where(RFQ.crm_lead_id == lead_id).order_by(RFQ.created_at.desc())
+    )
+    rfqs = list(result.scalars().all())
+    return LeadRfqListResponse(
+        items=[LeadRfqSummary.model_validate(r) for r in rfqs],
+        total=len(rfqs),
+    )
 
 
 async def delete_lead(db: AsyncSession, lead_id: uuid.UUID) -> None:

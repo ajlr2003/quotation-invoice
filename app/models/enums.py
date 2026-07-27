@@ -172,3 +172,13 @@ class CrmLeadStage(str, enum.Enum):
     QUALIFIED  = "qualified"
     PROPOSAL   = "proposal"
     CLOSED_WON = "closed_won"
+
+
+# ── Activity log ────────────────────────────────────────────────────────────
+
+class ActivityEntityType(str, enum.Enum):
+    """The type of business entity an ActivityLog entry is attached to."""
+    RFQ              = "rfq"
+    SUPPLIER         = "supplier"
+    SALES_QUOTATION  = "sales_quotation"
+    CRM_LEAD         = "crm_lead"
