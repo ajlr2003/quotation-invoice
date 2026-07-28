@@ -8,9 +8,18 @@ config = context.config
 if config.config_file_name is not None:
     fileConfig(config.config_file_name)
 
+from app.config import settings
 from app.database import Base
 import app.models  # noqa: F401 — registers ALL models in Base.metadata
 target_metadata = Base.metadata
+
+# Alembic uses the sync psycopg2 driver; the app itself uses async asyncpg.
+# Override alembic.ini's hardcoded localhost URL with the real DATABASE_URL
+# (e.g. pointing at the "postgres" service name inside Docker) at runtime.
+config.set_main_option(
+    "sqlalchemy.url",
+    settings.DATABASE_URL.replace("postgresql+asyncpg://", "postgresql+psycopg2://"),
+)
 
 
 def run_migrations_offline() -> None:

@@ -28,9 +28,9 @@ from fastapi.middleware.cors import CORSMiddleware
 from fastapi.responses import JSONResponse
 
 from app.config import settings
-from app.database import init_db, close_db, AsyncSessionLocal
+from app.database import close_db, AsyncSessionLocal
 
-# ── Register all ORM models in Base.metadata before init_db() ────────────────
+# ── Register all ORM models in Base.metadata (Alembic reads this too) ────────
 # The noqa comment suppresses the "imported but unused" warning; the import is
 # intentional — it populates Base.metadata as a side-effect.
 import app.models  # noqa: F401
@@ -185,15 +185,17 @@ async def lifespan(app: FastAPI):
     """ASGI lifespan context manager — runs startup then yields, then shutdown.
 
     Startup:
-        1. Create all ORM tables (dev convenience; use Alembic in production).
-        2. Seed test user and sample suppliers in DEBUG mode.
+        1. Seed test user and sample suppliers in DEBUG mode.
+
+    Schema is NOT created here — Alembic (`alembic upgrade head`) is the only
+    thing that manages the database schema in every environment. It runs
+    before this process starts (see the Docker entrypoint script).
 
     Shutdown:
         Dispose the SQLAlchemy connection pool cleanly.
     """
     # ── Startup ───────────────────────────────────────────────────────────────
     print(f"🚀  Starting {settings.APP_NAME} v{settings.APP_VERSION}")
-    await init_db()
     await _seed_test_user()
     await _seed_suppliers()
     from app.services.accounting_service import seed_default_accounts
