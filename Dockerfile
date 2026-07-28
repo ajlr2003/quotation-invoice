@@ -16,7 +16,13 @@ RUN pip install --no-cache-dir -r requirements.txt
 
 COPY . .
 
-RUN groupadd -r app && useradd -r -g app app \
+# Pre-create the upload directory with correct ownership so that when the
+# "backend_uploads" named volume is mounted here at container start, Docker
+# initializes it from this (already-owned-by-app) directory instead of a
+# fresh root-owned empty one — otherwise the non-root app user can't write
+# to it (document_service.py creates this dir at import time).
+RUN mkdir -p uploads/documents \
+    && groupadd -r app && useradd -r -g app app \
     && chown -R app:app /app
 USER app
 
