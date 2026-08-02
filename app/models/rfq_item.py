@@ -47,6 +47,8 @@ class RFQItem(AuditMixin, Base):
     product_code: Mapped[Optional[str]] = mapped_column(String(100))
     product_name: Mapped[str] = mapped_column(String(255), nullable=False)
     description: Mapped[Optional[str]] = mapped_column(Text)
+    manufacturer_name: Mapped[Optional[str]] = mapped_column(String(255))
+    manufacturer_number: Mapped[Optional[str]] = mapped_column(String(100))
     quantity: Mapped[float] = mapped_column(Numeric(12, 3), nullable=False)
     unit_of_measure: Mapped[str] = mapped_column(String(50), nullable=False, default="unit")
 

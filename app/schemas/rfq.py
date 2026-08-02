@@ -23,6 +23,8 @@ class RFQItemCreateRequest(BaseModel):
     product_code: Optional[str]        = Field(default=None, max_length=100)
     product_name: str                  = Field(min_length=1, max_length=255)
     description: Optional[str]         = None
+    manufacturer_name: Optional[str]   = Field(default=None, max_length=255)
+    manufacturer_number: Optional[str] = Field(default=None, max_length=100)
     quantity: float                    = Field(gt=0, description="Must be greater than zero")
     unit_of_measure: str               = Field(default="unit", max_length=50)
     target_unit_price: Optional[float] = Field(default=None, ge=0)
@@ -41,6 +43,8 @@ class RFQItemResponse(BaseModel):
     product_code: Optional[str]
     product_name: str
     description: Optional[str]
+    manufacturer_name: Optional[str]
+    manufacturer_number: Optional[str]
     quantity: float
     unit_of_measure: str
     target_unit_price: Optional[float]
