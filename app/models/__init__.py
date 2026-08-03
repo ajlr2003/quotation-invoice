@@ -58,6 +58,7 @@ from app.models.stock_movement import StockMovement
 from app.models.expense import Expense
 from app.models.activity_log import ActivityLog
 from app.models.vendor_pricelist import VendorPricelist
+from app.models.discount_rule import DiscountRule
 
 __all__ = [
     # Mixins

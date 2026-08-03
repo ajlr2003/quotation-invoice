@@ -40,7 +40,7 @@ from app.routers import (
     auth, users, clients, quotations, invoices, suppliers, rfqs,
     purchase_orders, grn, purchase_invoices, sales_quotations, sales_orders,
     dashboard, accounting, crm, odoo, payments, projects, documents, inventory, expenses,
-    activity, ai_copilot, vendor_pricelists,
+    activity, ai_copilot, vendor_pricelists, discount_rules,
 )
 
 logger = logging.getLogger(__name__)
@@ -273,6 +273,7 @@ def create_application() -> FastAPI:
     app.include_router(activity.router,          prefix=f"{API_PREFIX}/activity",          tags=["Activity"])
     app.include_router(ai_copilot.router,        prefix=f"{API_PREFIX}/ai",                tags=["AI Copilot"])
     app.include_router(vendor_pricelists.router, prefix=f"{API_PREFIX}/vendor-pricelists",  tags=["Vendor Pricelists"])
+    app.include_router(discount_rules.router,    prefix=f"{API_PREFIX}/discount-rules",     tags=["Discount Rules"])
 
     # ── Health-check endpoints ────────────────────────────────────────────────
 
