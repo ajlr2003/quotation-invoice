@@ -57,6 +57,7 @@ def _to_response(p: Project) -> ProjectResponse:
         total_hours=total_hours,
         tasks=[t for t in p.tasks],
         milestones=[m for m in p.milestones],
+        time_logs=sorted(p.time_logs, key=lambda tl: tl.date, reverse=True),
         created_at=p.created_at,
     )
 

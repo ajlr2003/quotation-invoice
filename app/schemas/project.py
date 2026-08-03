@@ -114,6 +114,7 @@ class ProjectResponse(BaseModel):
     total_hours: float = 0
     tasks: List[TaskResponse] = []
     milestones: List[MilestoneResponse] = []
+    time_logs: List[TimeLogResponse] = []
     created_at: datetime
     model_config = ConfigDict(from_attributes=True)
 
