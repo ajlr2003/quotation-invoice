@@ -59,6 +59,8 @@ from app.models.expense import Expense
 from app.models.activity_log import ActivityLog
 from app.models.vendor_pricelist import VendorPricelist
 from app.models.discount_rule import DiscountRule
+from app.models.config_list_item import ConfigListItem
+from app.models.app_settings import AppSettings
 
 __all__ = [
     # Mixins
