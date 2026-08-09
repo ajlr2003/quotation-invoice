@@ -150,6 +150,7 @@ class RFQResponse(BaseModel):
     selected_supplier: Optional[SupplierResponse] = None
     has_po: bool = False
     purchase_order: Optional[RFQPurchaseOrderSummary] = None
+    email_warning: Optional[str] = None
     created_at: datetime
     updated_at: datetime
 

@@ -81,6 +81,107 @@ async def send_email_with_pdf(
         )
 
 
+async def send_email(
+    to_addr: str,
+    subject: str,
+    body: str,
+) -> None:
+    """Send a plain-text email with no attachment.
+
+    Same provider priority as ``send_email_with_pdf`` (SendGrid → Resend →
+    SMTP) — used for notifications that don't need a PDF, e.g. RFQs sent to
+    suppliers.
+
+    Args:
+        to_addr: Recipient email address.
+        subject: Email subject line.
+        body:    Plain-text email body.
+
+    Raises:
+        RuntimeError: If no email provider is configured.
+    """
+    from app.config import settings
+
+    if settings.SENDGRID_API_KEY and settings.SENDGRID_FROM_EMAIL:
+        await _send_via_sendgrid_plain(
+            api_key=settings.SENDGRID_API_KEY,
+            from_addr=settings.SENDGRID_FROM_EMAIL,
+            to_addr=to_addr,
+            subject=subject,
+            body=body,
+        )
+    elif settings.RESEND_API_KEY:
+        await _send_via_resend_plain(
+            api_key=settings.RESEND_API_KEY,
+            from_addr=f"Kytos Arabia <{settings.RESEND_FROM_EMAIL}>",
+            to_addr=to_addr,
+            subject=subject,
+            body=body,
+        )
+    elif settings.SMTP_HOST and settings.SMTP_USER and settings.SMTP_PASS:
+        loop = asyncio.get_event_loop()
+        await loop.run_in_executor(
+            None,
+            _send_via_smtp_plain,
+            settings.SMTP_HOST,
+            settings.SMTP_PORT,
+            settings.SMTP_USER,
+            settings.SMTP_PASS,
+            to_addr,
+            subject,
+            body,
+        )
+    else:
+        raise RuntimeError(
+            "Email not configured — set SENDGRID_API_KEY or RESEND_API_KEY in environment"
+        )
+
+
+async def _send_via_sendgrid_plain(api_key: str, from_addr: str, to_addr: str, subject: str, body: str) -> None:
+    import httpx
+
+    payload = {
+        "personalizations": [{"to": [{"email": to_addr}]}],
+        "from": {"email": from_addr, "name": "Kytos Arabia"},
+        "subject": subject,
+        "content": [{"type": "text/plain", "value": body}],
+    }
+    async with httpx.AsyncClient(timeout=30) as client:
+        res = await client.post(
+            "https://api.sendgrid.com/v3/mail/send",
+            headers={"Authorization": f"Bearer {api_key}"},
+            json=payload,
+        )
+        if res.status_code not in (200, 201, 202):
+            raise RuntimeError(f"SendGrid API error {res.status_code}: {res.text}")
+
+
+async def _send_via_resend_plain(api_key: str, from_addr: str, to_addr: str, subject: str, body: str) -> None:
+    import httpx
+
+    payload = {"from": from_addr, "to": [to_addr], "subject": subject, "text": body}
+    async with httpx.AsyncClient(timeout=30) as client:
+        res = await client.post(
+            "https://api.resend.com/emails",
+            headers={"Authorization": f"Bearer {api_key}"},
+            json=payload,
+        )
+        if res.status_code not in (200, 201):
+            raise RuntimeError(f"Resend API error {res.status_code}: {res.text}")
+
+
+def _send_via_smtp_plain(host: str, port: int, user: str, password: str, to_addr: str, subject: str, body: str) -> None:
+    msg = MIMEMultipart()
+    msg["From"] = user
+    msg["To"] = to_addr
+    msg["Subject"] = subject
+    msg.attach(MIMEText(body, "plain"))
+    with smtplib.SMTP(host, port, timeout=15) as server:
+        server.starttls()
+        server.login(user, password)
+        server.send_message(msg)
+
+
 async def _send_via_sendgrid(
     api_key: str,
     from_addr: str,

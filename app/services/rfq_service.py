@@ -23,7 +23,9 @@ from app.models.rfq_item import RFQItem
 from app.models.supplier import Supplier
 from app.models.user import User
 from app.models.supplier_quotation import SupplierQuotation
+from app.config import settings
 from app.services import activity_service
+from app.utils.email import send_email
 from app.schemas.rfq import (
     RFQCreateRequest,
     RFQItemCreateRequest,
@@ -422,6 +424,26 @@ async def delete_rfq(
 # RFQ — Send (DRAFT → SENT)
 # ---------------------------------------------------------------------------
 
+def _build_rfq_email_body(rfq: RFQ) -> str:
+    lines = [
+        f"Dear Supplier,\n",
+        f"We would like to request a quotation for the following ({rfq.rfq_number}):\n",
+    ]
+    for item in rfq.items:
+        detail = f"  - {item.product_name} — Qty: {item.quantity} {item.unit_of_measure}"
+        if item.manufacturer_name or item.manufacturer_number:
+            detail += f" (Mfr: {item.manufacturer_name or ''} {item.manufacturer_number or ''})".rstrip()
+        if item.description:
+            detail += f"\n    {item.description}"
+        lines.append(detail)
+    if rfq.deadline:
+        lines.append(f"\nPlease submit your quotation by {rfq.deadline}.")
+    if rfq.description:
+        lines.append(f"\n{rfq.description}")
+    lines.append(f"\nBest regards,\n{settings.COMPANY_NAME}")
+    return "\n".join(lines)
+
+
 async def send_rfq(
     db: AsyncSession,
     rfq_id: uuid.UUID,
@@ -429,6 +451,24 @@ async def send_rfq(
 ) -> RFQResponse:
     rfq = await _get_rfq_or_404(db, rfq_id)
     _assert_transition(rfq, RFQStatus.SENT)  # enforces draft-only rule
+
+    email_body = _build_rfq_email_body(rfq)
+    subject = f"Request for Quotation — {rfq.rfq_number}: {rfq.title}"
+
+    failed_suppliers: list[str] = []
+    for supplier in rfq.suppliers:
+        if not supplier.email:
+            failed_suppliers.append(f"{supplier.company_name} (no email on file)")
+            continue
+        try:
+            await send_email(to_addr=supplier.email, subject=subject, body=email_body)
+        except Exception as exc:
+            import logging
+            logging.getLogger(__name__).warning(
+                "RFQ email delivery failed for supplier %s: %s", supplier.company_name, exc
+            )
+            failed_suppliers.append(supplier.company_name)
+
     rfq.status = RFQStatus.SENT
     activity_service.log_activity(
         db, ActivityEntityType.RFQ, rfq.id, "status_changed",
@@ -437,7 +477,12 @@ async def send_rfq(
     )
     await db.flush()
     rfq_full = await _get_rfq_or_404(db, rfq_id)
-    return RFQResponse.from_orm_with_count(rfq_full)
+    resp = RFQResponse.from_orm_with_count(rfq_full)
+    if failed_suppliers:
+        resp.email_warning = (
+            f"Status updated to Sent but email could not be delivered to: {', '.join(failed_suppliers)}"
+        )
+    return resp
 
 
 # ============================================================================
