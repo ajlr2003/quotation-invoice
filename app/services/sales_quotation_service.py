@@ -16,7 +16,7 @@ from typing import Optional
 
 from fastapi import HTTPException, status
 from fastapi.responses import StreamingResponse
-from sqlalchemy import func, select
+from sqlalchemy import Integer, func, select
 from sqlalchemy.ext.asyncio import AsyncSession
 from sqlalchemy.orm import selectinload
 
@@ -65,12 +65,11 @@ async def _next_quote_number(db: AsyncSession) -> str:
     """
     year = datetime.now(timezone.utc).year
     prefix = f"SQ-{year}-"
-    count_result = await db.execute(
-        select(func.count()).select_from(SalesQuotation).where(
-            SalesQuotation.quote_number.like(f"{prefix}%")
-        )
+    max_result = await db.execute(
+        select(func.max(func.cast(func.substr(SalesQuotation.quote_number, len(prefix) + 1), Integer)))
+        .where(SalesQuotation.quote_number.like(f"{prefix}%"))
     )
-    n = (count_result.scalar_one() or 0) + 1
+    n = (max_result.scalar_one_or_none() or 0) + 1
     return f"{prefix}{n:04d}"
 
 
