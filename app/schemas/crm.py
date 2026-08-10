@@ -45,6 +45,16 @@ class CrmLeadStageUpdate(BaseModel):
     stage: CrmLeadStage = Field(..., description="Target pipeline stage")
 
 
+class CrmCallLogCreate(BaseModel):
+    """Payload for logging a call against a lead."""
+
+    contact_person: Optional[str] = Field(None, max_length=255)
+    duration_minutes: Optional[int] = Field(None, ge=0)
+    outcome: Optional[str] = Field(None, max_length=100)
+    notes: Optional[str] = None
+    follow_up_date: Optional[str] = Field(None, description="ISO date string, e.g. 2026-08-15")
+
+
 class CrmLeadResponse(BaseModel):
     """Full lead representation returned by list and detail endpoints."""
 

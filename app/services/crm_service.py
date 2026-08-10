@@ -18,6 +18,7 @@ from app.models.crm_lead import CrmLead
 from app.models.enums import ActivityEntityType, CrmLeadStage
 from app.models.rfq import RFQ
 from app.schemas.crm import (
+    CrmCallLogCreate,
     CrmKPIResponse,
     CrmLeadCreate,
     CrmLeadListResponse,
@@ -160,6 +161,53 @@ async def update_stage(
             f"Moved from {old_stage.value} to {payload.stage.value}",
             user_id=user_id,
         )
+    await db.commit()
+    await db.refresh(lead)
+    return CrmLeadResponse.model_validate(lead)
+
+
+async def log_call(
+    db: AsyncSession,
+    lead_id: uuid.UUID,
+    payload: CrmCallLogCreate,
+    user_id: Optional[uuid.UUID] = None,
+) -> CrmLeadResponse:
+    """Record a call against a lead as an activity-timeline entry.
+
+    Args:
+        db:      Async database session.
+        lead_id: UUID of the lead the call was made about.
+        payload: Call details (contact, duration, outcome, notes, follow-up).
+        user_id: UUID of the acting user, if any.
+
+    Returns:
+        The lead as a CrmLeadResponse (unchanged; the call is recorded on
+        the activity timeline, not on the lead itself).
+
+    Raises:
+        HTTPException 404: If no lead with ``lead_id`` exists.
+    """
+    lead = await db.get(CrmLead, lead_id)
+    if not lead:
+        raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="Lead not found")
+
+    message = "Call logged"
+    if payload.contact_person:
+        message += f" with {payload.contact_person}"
+    if payload.duration_minutes is not None:
+        message += f" ({payload.duration_minutes} min)"
+    if payload.outcome:
+        message += f" — {payload.outcome}"
+    if payload.notes:
+        message += f": {payload.notes}"
+    if payload.follow_up_date:
+        message += f" (follow up {payload.follow_up_date})"
+
+    activity_service.log_activity(
+        db, ActivityEntityType.CRM_LEAD, lead.id, "call_logged",
+        message,
+        user_id=user_id,
+    )
     await db.commit()
     await db.refresh(lead)
     return CrmLeadResponse.model_validate(lead)

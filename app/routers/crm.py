@@ -9,6 +9,7 @@
 #   GET  /leads                   — list all leads
 #   POST /leads                   — create a new lead
 #   PATCH /leads/{id}/stage       — move a lead to a new pipeline stage
+#   POST /leads/{id}/calls        — log a call against a lead
 #   DELETE /leads/{id}            — delete a lead
 #
 # All routes require a valid Bearer JWT (get_current_user dependency).
@@ -23,6 +24,7 @@ from app.database import get_db
 from app.middleware.auth import get_current_user, require_roles
 from app.models.enums import UserRole
 from app.schemas.crm import (
+    CrmCallLogCreate,
     CrmKPIResponse,
     CrmLeadCreate,
     CrmLeadListResponse,
@@ -112,6 +114,24 @@ async def update_lead_stage(
     current_user=Depends(_sales_roles),
 ):
     return await crm_service.update_stage(db, lead_id, payload, user_id=current_user.id)
+
+
+@router.post(
+    "/leads/{lead_id}/calls",
+    response_model=CrmLeadResponse,
+    summary="Log a call against a lead",
+    description=(
+        "Records a call as an activity-timeline entry on the lead "
+        "(contact, duration, outcome, notes, follow-up date)."
+    ),
+)
+async def log_call(
+    lead_id: uuid.UUID,
+    payload: CrmCallLogCreate,
+    db: AsyncSession = Depends(get_db),
+    current_user=Depends(_sales_roles),
+):
+    return await crm_service.log_call(db, lead_id, payload, user_id=current_user.id)
 
 
 @router.get(
