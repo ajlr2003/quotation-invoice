@@ -4,6 +4,7 @@ import uuid
 from datetime import date, datetime, timedelta, timezone
 from typing import List, Optional
 
+from fastapi import HTTPException, status
 from sqlalchemy import func, select, extract
 from sqlalchemy.ext.asyncio import AsyncSession
 from sqlalchemy.orm import selectinload
@@ -28,6 +29,16 @@ from app.schemas.inventory import (
 
 def _item_to_response(item: StockItem) -> StockItemResponse:
     return StockItemResponse.model_validate(item)
+
+
+def _apply_factor_pricing(item: StockItem) -> None:
+    """Recompute unit_price = cost * price_factor when both are set.
+
+    Leaves unit_price as-is (manual entry) if either is missing, so items
+    that don't use factor-based pricing keep working unchanged.
+    """
+    if item.cost is not None and item.price_factor is not None:
+        item.unit_price = round(float(item.cost) * float(item.price_factor), 4)
 
 
 def _movement_to_response(m: StockMovement, item: StockItem | None = None) -> StockMovementResponse:
@@ -74,8 +85,16 @@ async def get_item(db: AsyncSession, item_id: uuid.UUID) -> StockItem | None:
     return (await db.execute(select(StockItem).where(StockItem.id == item_id))).scalar_one_or_none()
 
 
-async def create_item(db: AsyncSession, payload: StockItemCreate) -> StockItemResponse:
+async def create_item(
+    db: AsyncSession, payload: StockItemCreate, allow_factor_edit: bool = True
+) -> StockItemResponse:
+    if payload.price_factor is not None and not allow_factor_edit:
+        raise HTTPException(
+            status_code=status.HTTP_403_FORBIDDEN,
+            detail="You don't have permission to set the pricing factor",
+        )
     item = StockItem(**payload.model_dump())
+    _apply_factor_pricing(item)
     db.add(item)
     await db.flush()
     await db.refresh(item)
@@ -83,13 +102,23 @@ async def create_item(db: AsyncSession, payload: StockItemCreate) -> StockItemRe
 
 
 async def update_item(
-    db: AsyncSession, item_id: uuid.UUID, payload: StockItemUpdate
+    db: AsyncSession, item_id: uuid.UUID, payload: StockItemUpdate, allow_factor_edit: bool = True
 ) -> StockItemResponse | None:
     item = await get_item(db, item_id)
     if not item:
         return None
-    for k, v in payload.model_dump(exclude_unset=True).items():
+    data = payload.model_dump(exclude_unset=True)
+    if "price_factor" in data and not allow_factor_edit:
+        new_factor = data["price_factor"]
+        old_factor = float(item.price_factor) if item.price_factor is not None else None
+        if new_factor != old_factor:
+            raise HTTPException(
+                status_code=status.HTTP_403_FORBIDDEN,
+                detail="You don't have permission to change the pricing factor",
+            )
+    for k, v in data.items():
         setattr(item, k, v)
+    _apply_factor_pricing(item)
     await db.flush()
     await db.refresh(item)
     return _item_to_response(item)

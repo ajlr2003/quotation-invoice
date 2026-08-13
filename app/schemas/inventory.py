@@ -14,13 +14,17 @@ class StockItemCreate(BaseModel):
     box_number: Optional[str] = None
     supplier_manufacturer: Optional[str] = None
     part_number: str = Field(min_length=1)
+    cat_number: Optional[str] = None
     serial_number: Optional[str] = None
     description: Optional[str] = None
     expiry_date: Optional[_Date] = None
     stock_qty: int = Field(default=0, ge=0)
     received_file_no: Optional[str] = None
     po_number: Optional[str] = None
+    cost: Optional[float] = Field(default=None, ge=0)
+    price_factor: Optional[float] = Field(default=None, gt=0)
     unit_price: Optional[float] = Field(default=None, ge=0)
+    currency: Optional[str] = None
     receiving_delivery_status: Optional[str] = None
     customer_name: Optional[str] = None
     image_url: Optional[str] = None

@@ -25,6 +25,11 @@ router = APIRouter()
 
 _inventory_write_roles = require_roles(UserRole.ADMIN, UserRole.MANAGER, UserRole.PURCHASER)
 
+# Changing the cost->sales-price multiplying factor is restricted to a
+# narrower group than general inventory editing, since it directly sets
+# margin on every item priced that way.
+_FACTOR_EDIT_ROLES = {UserRole.ADMIN, UserRole.MANAGER}
+
 
 # ── KPIs ──────────────────────────────────────────────────────────────────────
 
@@ -69,9 +74,11 @@ async def list_items(
 async def create_item(
     payload: StockItemCreate,
     db: AsyncSession = Depends(get_db),
-    _=Depends(_inventory_write_roles),
+    current_user=Depends(_inventory_write_roles),
 ):
-    item = await inventory_service.create_item(db, payload)
+    item = await inventory_service.create_item(
+        db, payload, allow_factor_edit=current_user.role in _FACTOR_EDIT_ROLES,
+    )
     await db.commit()
     return item
 
@@ -81,9 +88,11 @@ async def update_item(
     item_id: uuid.UUID,
     payload: StockItemUpdate,
     db: AsyncSession = Depends(get_db),
-    _=Depends(_inventory_write_roles),
+    current_user=Depends(_inventory_write_roles),
 ):
-    result = await inventory_service.update_item(db, item_id, payload)
+    result = await inventory_service.update_item(
+        db, item_id, payload, allow_factor_edit=current_user.role in _FACTOR_EDIT_ROLES,
+    )
     if not result:
         raise HTTPException(status_code=404, detail="Item not found")
     await db.commit()
