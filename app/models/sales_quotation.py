@@ -23,6 +23,7 @@ from app.models.enums import SalesQuotationStatus
 if TYPE_CHECKING:
     from app.models.sales_quotation_item import SalesQuotationItem
     from app.models.rfq import RFQ
+    from app.models.customer_rfq import CustomerRFQ
     from app.models.user import User
 
 
@@ -80,11 +81,21 @@ class SalesQuotation(AuditMixin, Base):
         index=True,
     )
 
-    # ── RFQ link (optional — traces this quote back to the originating RFQ,
-    # so the quote_number can be auto-derived as "QT" + rfq_number) ───────────
+    # ── RFQ link (optional — traces this quote back to the outbound RFQ WE
+    # sent a supplier to source pricing, so the quote_number can be
+    # auto-derived as "QT" + rfq_number) ───────────────────────────────────
     rfq_id: Mapped[Optional[uuid.UUID]] = mapped_column(
         PG_UUID(as_uuid=True),
         ForeignKey("rfqs.id", ondelete="SET NULL"),
+        nullable=True,
+        index=True,
+    )
+
+    # ── Customer RFQ link (optional — traces this quote back to the request
+    # the CUSTOMER sent us, distinct from rfq_id above) ────────────────────
+    customer_rfq_id: Mapped[Optional[uuid.UUID]] = mapped_column(
+        PG_UUID(as_uuid=True),
+        ForeignKey("customer_rfqs.id", ondelete="SET NULL"),
         nullable=True,
         index=True,
     )
@@ -135,6 +146,9 @@ class SalesQuotation(AuditMixin, Base):
         order_by="SalesQuotationItem.line_no",
     )
     rfq: Mapped[Optional["RFQ"]] = relationship("RFQ", foreign_keys=[rfq_id], lazy="noload")
+    customer_rfq: Mapped[Optional["CustomerRFQ"]] = relationship(
+        "CustomerRFQ", foreign_keys=[customer_rfq_id], lazy="noload"
+    )
     created_by: Mapped[Optional["User"]] = relationship(
         "User", foreign_keys=[created_by_id], lazy="noload"
     )

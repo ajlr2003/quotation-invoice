@@ -12,6 +12,7 @@ from app.models.enums import (
     ApprovalEntityType,
     ApprovalStatus,
     CrmLeadStage,
+    CustomerRFQStatus,
     DocumentEntityType,
     DocumentType,
     PurchaseOrderStatus,
@@ -48,6 +49,7 @@ from app.models.sales_quotation_item import SalesQuotationItem
 from app.models.sales_order import SalesOrder
 from app.models.sales_order_item import SalesOrderItem
 from app.models.crm_lead import CrmLead
+from app.models.customer_rfq import CustomerRFQ
 from app.models.payment import Payment
 from app.models.project import Project
 from app.models.project_task import ProjectTask
@@ -88,6 +90,7 @@ __all__ = [
     "BankTransaction",
     "ClosedPeriod",
     "CrmLead", "CrmLeadStage",
+    "CustomerRFQ", "CustomerRFQStatus",
     "Payment",
     "Project", "ProjectTask", "ProjectMilestone", "TimeLog",
     "StockItem", "StockMovement",

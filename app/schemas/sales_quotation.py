@@ -86,7 +86,8 @@ class SalesQuotationCreate(BaseModel):
     outcome: Optional[str] = None
     items: List[SalesQuotationItemCreate] = Field(min_length=1)
     crm_lead_id: Optional[uuid.UUID] = None  # link this quote to a CRM lead
-    rfq_id: Optional[uuid.UUID] = None  # link this quote to its originating RFQ
+    rfq_id: Optional[uuid.UUID] = None  # link this quote to the outbound RFQ we sent a supplier
+    customer_rfq_id: Optional[uuid.UUID] = None  # link this quote to the request the customer sent us
 
     @field_validator("email")
     @classmethod
@@ -223,6 +224,7 @@ class SalesQuotationResponse(BaseModel):
     crm_lead_id: Optional[uuid.UUID] = None
     rfq_id: Optional[uuid.UUID] = None
     rfq_number: Optional[str] = None
+    customer_rfq_id: Optional[uuid.UUID] = None
     customer_reference: Optional[str] = None
     created_by_id: Optional[uuid.UUID] = None
     created_by_name: Optional[str] = None

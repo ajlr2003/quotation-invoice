@@ -24,6 +24,7 @@ from app.config import settings
 from app.models.enums import ActivityEntityType, SalesOrderStatus, SalesQuotationStatus
 from app.utils.email import send_email_with_pdf
 from app.models.crm_lead import CrmLead
+from app.models.customer_rfq import CustomerRFQ
 from app.models.rfq import RFQ
 from app.models.sales_order import SalesOrder
 from app.models.sales_order_item import SalesOrderItem
@@ -36,7 +37,7 @@ from app.schemas.sales_quotation import (
     SalesQuotationResponse,
     SalesQuotationUpdate,
 )
-from app.services import activity_service
+from app.services import activity_service, customer_rfq_service
 
 # ── State-machine: allowed transitions between quotation statuses ─────────────
 # Sending (DRAFT → SENT) is handled separately by `send_quotation` to ensure
@@ -146,6 +147,7 @@ async def _load(db: AsyncSession, quote_id) -> SalesQuotation:
         .options(
             selectinload(SalesQuotation.items),
             selectinload(SalesQuotation.rfq),
+            selectinload(SalesQuotation.customer_rfq),
             selectinload(SalesQuotation.created_by),
             selectinload(SalesQuotation.approved_by),
         )
@@ -217,6 +219,18 @@ async def create_quotation(
     else:
         quote_number = await _next_quote_number(db)
 
+    customer_rfq: Optional[CustomerRFQ] = None
+    if payload.customer_rfq_id:
+        cust_rfq_result = await db.execute(
+            select(CustomerRFQ).where(CustomerRFQ.id == payload.customer_rfq_id)
+        )
+        customer_rfq = cust_rfq_result.scalar_one_or_none()
+        if customer_rfq is None:
+            raise HTTPException(
+                status_code=status.HTTP_404_NOT_FOUND,
+                detail="Customer RFQ not found",
+            )
+
     subtotal, vat, total = _calc_totals(valid)
 
     q = SalesQuotation(
@@ -235,7 +249,7 @@ async def create_quotation(
         fax=(payload.fax or "").strip() or None,
         email=(payload.email or "").strip() or None,
         cc=(payload.cc or "").strip() or None,
-        your_ref=(payload.your_ref or "").strip() or None,
+        your_ref=(payload.your_ref or "").strip() or (customer_rfq.customer_reference if customer_rfq else None),
         subject=(payload.subject or "").strip() or "Sales Quotation",
         invoice_address=(payload.invoice_address or "").strip() or None,
         delivery_address=(payload.delivery_address or "").strip() or None,
@@ -252,6 +266,7 @@ async def create_quotation(
         status=SalesQuotationStatus.DRAFT,
         crm_lead_id=getattr(payload, "crm_lead_id", None),
         rfq_id=payload.rfq_id,
+        customer_rfq_id=payload.customer_rfq_id,
         created_by_id=user_id,
     )
     db.add(q)
@@ -294,6 +309,10 @@ async def create_quotation(
         f"Quotation {quote_number} created",
         user_id=user_id,
     )
+
+    if customer_rfq:
+        await customer_rfq_service.mark_quoted_if_open(db, customer_rfq.id, user_id=user_id)
+
     await db.flush()
 
     return await _to_response(db, q.id)
@@ -392,6 +411,7 @@ async def list_quotations(
         .options(
             selectinload(SalesQuotation.items),
             selectinload(SalesQuotation.rfq),
+            selectinload(SalesQuotation.customer_rfq),
             selectinload(SalesQuotation.created_by),
             selectinload(SalesQuotation.approved_by),
         )
@@ -406,7 +426,7 @@ async def list_quotations(
     result = await db.execute(stmt)
     rows = result.scalars().all()
     return SalesQuotationListResponse(
-        items=[SalesQuotationResponse.model_validate(r) for r in rows],
+        items=[_build_response(r) for r in rows],
         total=len(rows),
     )
 
@@ -1223,6 +1243,17 @@ def _build_pdf(q: SalesQuotation) -> BytesIO:  # noqa: C901
     return buf
 
 
+def _build_response(q: SalesQuotation) -> SalesQuotationResponse:
+    """Build a response schema from a loaded quotation, filling in fields
+    denormalised from its linked Customer RFQ (if any) that have no direct
+    column on SalesQuotation itself.
+    """
+    resp = SalesQuotationResponse.model_validate(q)
+    if q.customer_rfq is not None:
+        resp.customer_reference = q.customer_rfq.customer_reference
+    return resp
+
+
 async def _to_response(db: AsyncSession, quote_id) -> SalesQuotationResponse:
     """Re-fetch a quotation from the DB and return it as a response schema.
 
@@ -1237,4 +1268,4 @@ async def _to_response(db: AsyncSession, quote_id) -> SalesQuotationResponse:
         The quotation as a ``SalesQuotationResponse``.
     """
     q = await _load(db, quote_id)
-    return SalesQuotationResponse.model_validate(q)
+    return _build_response(q)

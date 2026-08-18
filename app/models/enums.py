@@ -45,6 +45,21 @@ class RFQStatus(str, enum.Enum):
     CANCELLED = "cancelled"
 
 
+# ── Customer RFQ (request received FROM a customer, distinct from the RFQ we
+# send TO suppliers above) ─────────────────────────────────────────────────────
+
+class CustomerRFQStatus(str, enum.Enum):
+    """Lifecycle of a request received from a customer.
+
+    Transitions: ``open`` -> ``quoted`` (a Sales Quotation was created
+    against it) -> ``closed``. ``open`` -> ``closed`` directly is also valid
+    (e.g. the request was withdrawn or dropped before quoting).
+    """
+    OPEN    = "open"
+    QUOTED  = "quoted"
+    CLOSED  = "closed"
+
+
 # ── Supplier Quote ────────────────────────────────────────────────────────────
 
 class SupplierQuoteStatus(str, enum.Enum):
@@ -182,3 +197,4 @@ class ActivityEntityType(str, enum.Enum):
     SUPPLIER         = "supplier"
     SALES_QUOTATION  = "sales_quotation"
     CRM_LEAD         = "crm_lead"
+    CUSTOMER_RFQ     = "customer_rfq"
