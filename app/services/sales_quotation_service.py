@@ -150,6 +150,7 @@ async def _load(db: AsyncSession, quote_id) -> SalesQuotation:
             selectinload(SalesQuotation.customer_rfq),
             selectinload(SalesQuotation.created_by),
             selectinload(SalesQuotation.approved_by),
+            selectinload(SalesQuotation.updated_by_user),
         )
     )
     q = result.scalar_one_or_none()
@@ -414,6 +415,7 @@ async def list_quotations(
             selectinload(SalesQuotation.customer_rfq),
             selectinload(SalesQuotation.created_by),
             selectinload(SalesQuotation.approved_by),
+            selectinload(SalesQuotation.updated_by_user),
         )
         .order_by(SalesQuotation.created_at.desc())
     )

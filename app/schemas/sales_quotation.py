@@ -221,6 +221,8 @@ class SalesQuotationResponse(BaseModel):
     accepted_at: Optional[datetime] = None
     converted_at: Optional[datetime] = None
     updated_by: Optional[uuid.UUID] = None
+    updated_by_name: Optional[str] = None
+    updated_by_email: Optional[str] = None
     crm_lead_id: Optional[uuid.UUID] = None
     rfq_id: Optional[uuid.UUID] = None
     rfq_number: Optional[str] = None
@@ -228,6 +230,7 @@ class SalesQuotationResponse(BaseModel):
     customer_reference: Optional[str] = None
     created_by_id: Optional[uuid.UUID] = None
     created_by_name: Optional[str] = None
+    created_by_email: Optional[str] = None
     approved_by_id: Optional[uuid.UUID] = None
     approved_by_name: Optional[str] = None
     approved_at: Optional[datetime] = None

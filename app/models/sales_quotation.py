@@ -135,8 +135,13 @@ class SalesQuotation(AuditMixin, Base):
     sent_at: Mapped[Optional[datetime]] = mapped_column(DateTime(timezone=True), nullable=True)
     accepted_at: Mapped[Optional[datetime]] = mapped_column(DateTime(timezone=True), nullable=True)
     converted_at: Mapped[Optional[datetime]] = mapped_column(DateTime(timezone=True), nullable=True)
-    # UUID of the user who last changed the status (not a FK to keep it lightweight)
-    updated_by: Mapped[Optional[uuid.UUID]] = mapped_column(PG_UUID(as_uuid=True), nullable=True)
+    # UUID of the user who last changed the status — FK'd so it can be
+    # resolved to a name/email for display (see updated_by_name/_email below).
+    updated_by: Mapped[Optional[uuid.UUID]] = mapped_column(
+        PG_UUID(as_uuid=True),
+        ForeignKey("users.id", ondelete="SET NULL"),
+        nullable=True,
+    )
 
     # ── Relationships ──────────────────────────────────────────────────────────
     items: Mapped[List["SalesQuotationItem"]] = relationship(
@@ -155,6 +160,9 @@ class SalesQuotation(AuditMixin, Base):
     approved_by: Mapped[Optional["User"]] = relationship(
         "User", foreign_keys=[approved_by_id], lazy="noload"
     )
+    updated_by_user: Mapped[Optional["User"]] = relationship(
+        "User", foreign_keys=[updated_by], lazy="noload"
+    )
 
     # ── Denormalised display helpers (require ``rfq``/``created_by``/
     # ``approved_by`` to be eagerly loaded — see selectinload() in the
@@ -172,8 +180,20 @@ class SalesQuotation(AuditMixin, Base):
         return self.created_by.full_name if self.created_by else None
 
     @property
+    def created_by_email(self) -> Optional[str]:
+        return self.created_by.email if self.created_by else None
+
+    @property
     def approved_by_name(self) -> Optional[str]:
         return self.approved_by.full_name if self.approved_by else None
+
+    @property
+    def updated_by_name(self) -> Optional[str]:
+        return self.updated_by_user.full_name if self.updated_by_user else None
+
+    @property
+    def updated_by_email(self) -> Optional[str]:
+        return self.updated_by_user.email if self.updated_by_user else None
 
     def __repr__(self) -> str:
         return f"<SalesQuotation {self.quote_number} status={self.status} total={self.total}>"
