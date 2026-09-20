@@ -145,6 +145,19 @@ class SalesQuotationStatus(str, enum.Enum):
     CONVERTED = "converted"   # converted to a SalesOrder
 
 
+class SalesInvoiceStatus(str, enum.Enum):
+    """Lifecycle of a customer (sales) invoice.
+
+    ``draft`` invoices are editable and have no number yet; ``posted`` ones
+    have a sequential number and are immutable; ``paid`` is reached once
+    recorded payments cover the total.
+    """
+    DRAFT     = "draft"
+    POSTED    = "posted"
+    PAID      = "paid"
+    CANCELLED = "cancelled"
+
+
 class SalesOrderStatus(str, enum.Enum):
     """Fulfillment status for a Sales Order created from an accepted SalesQuotation.
 
@@ -198,3 +211,4 @@ class ActivityEntityType(str, enum.Enum):
     SALES_QUOTATION  = "sales_quotation"
     CRM_LEAD         = "crm_lead"
     CUSTOMER_RFQ     = "customer_rfq"
+    SALES_INVOICE    = "sales_invoice"

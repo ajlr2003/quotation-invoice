@@ -72,16 +72,35 @@ class Settings(BaseSettings):
     # Absolute path to logo JPG/PNG; if empty, a text-only fallback is rendered
     COMPANY_LOGO_PATH: str = ""
 
+    # ── Seller block + bank accounts printed on customer (tax) invoices ───────
+    # Mirrors the legal invoice layout, so each value is bilingual free text
+    # exactly as it should print (English first, then Arabic). Override any of
+    # them from .env; COMPANY_BANK_ACCOUNTS is a JSON list, one entry per
+    # currency (the invoice prints the account matching its currency).
+    SELLER_NAME: str = "Abdulkarim H. Al Sinan & Partner For Trading Company شركة عبدالكريم حسين السنان وشريكه للتجارة"
+    SELLER_BUILDING: str = "Building Number 4084 رقم المبنى ; Unit 1 وحدة ; Additional Number 8189 الرقم الإضافي"
+    SELLER_STREET: str = "Makkah Street شارع مكة"
+    SELLER_DISTRICT: str = "Al Dana الدانة"
+    SELLER_CITY: str = "Jubail الجبيل المنطقة الشرقية Eastern Province"
+    SELLER_COUNTRY: str = "Saudi Arabia"
+    SELLER_POSTAL_CODE: str = "35514"
+    SELLER_VAT_NUMBER: str = "300506284400003"
+    SELLER_CR_NO: str = "2055001448"
+    COMPANY_BANK_ACCOUNTS: list = [
+        {
+            "currency": "USD",
+            "account_name": "Abdulkarim H. Al Sinan & Partner For Trading Company شركة عبدالكريم حسين السنان وشريكه للتجارة",
+            "account_no": "3232820640440",
+            "swift": "RIBLSARIXXX",
+            "bank": "Riyad Bank - USD",
+            "branch": "Main Branch, Jubail, Kingdom of Saudi Arabia الفرع الرئيسي ، الجبيل ، المملكة العربية السعودية",
+            "iban": "SA7520000003232820640440",
+        },
+    ]
+
     # ── AI Copilot (Anthropic Claude) ────────────────────────────────────────
     ANTHROPIC_API_KEY: str = ""                  # sk-ant-... — leave empty to disable AI Copilot
     ANTHROPIC_MODEL: str = "claude-opus-4-8"     # e.g. claude-sonnet-5 for lower cost
-
-    # ── Odoo integration ─────────────────────────────────────────────────────
-    ODOO_URL: str = ""          # e.g. https://kytos1.odoo.com
-    ODOO_DB: str = ""           # Odoo database name, e.g. kytos1
-    ODOO_LOGIN: str = ""        # Odoo account email
-    ODOO_API_KEY: str = ""      # Odoo API key (Settings → My Profile → API Keys)
-    ODOO_PASSWORD: str = ""     # Odoo account password — needed for PDF download via web session
 
     # ── Payment gateways ─────────────────────────────────────────────────────
     STRIPE_SECRET_KEY: str = ""          # sk_test_... or sk_live_...
@@ -112,6 +131,12 @@ class Settings(BaseSettings):
             return 587
         return int(v)
 
+    @field_validator("COMPANY_BANK_ACCOUNTS", mode="before")
+    @classmethod
+    def parse_bank_accounts(cls, v: str | list) -> list:
+        """Accept the bank-account list as a JSON string (env var) or a list."""
+        return json.loads(v) if isinstance(v, str) else v
+
     @field_validator("ALLOWED_ORIGINS", mode="before")
     @classmethod
     def parse_origins(cls, v: str | list) -> list:
@@ -128,7 +153,9 @@ class Settings(BaseSettings):
             return json.loads(v)
         return v
 
-    model_config = {"env_file": ".env", "case_sensitive": True}
+    # extra="ignore": stale keys left in a deployed .env (e.g. the retired
+    # ODOO_* settings) must not stop the app from booting.
+    model_config = {"env_file": ".env", "case_sensitive": True, "extra": "ignore"}
 
 
 @lru_cache()

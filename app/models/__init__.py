@@ -18,6 +18,7 @@ from app.models.enums import (
     PurchaseOrderStatus,
     QuotationStatus,
     RFQStatus,
+    SalesInvoiceStatus,
     SalesOrderStatus,
     SalesQuotationStatus,
     SupplierQuoteStatus,
@@ -48,6 +49,7 @@ from app.models.sales_quotation import SalesQuotation
 from app.models.sales_quotation_item import SalesQuotationItem
 from app.models.sales_order import SalesOrder
 from app.models.sales_order_item import SalesOrderItem
+from app.models.sales_invoice import SalesInvoice, SalesInvoiceItem, SalesInvoicePayment
 from app.models.crm_lead import CrmLead
 from app.models.customer_rfq import CustomerRFQ
 from app.models.payment import Payment
@@ -84,6 +86,7 @@ __all__ = [
     "SalesQuotationItem",
     "SalesOrder",
     "SalesOrderItem",
+    "SalesInvoice", "SalesInvoiceItem", "SalesInvoicePayment", "SalesInvoiceStatus",
     "Account", "AccountType",
     "JournalEntry", "JournalEntryStatus",
     "BankAccount", "BankAccountType",
