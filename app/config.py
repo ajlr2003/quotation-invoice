@@ -88,6 +88,15 @@ class Settings(BaseSettings):
     SELLER_CR_NO: str = "2055001448"
     COMPANY_BANK_ACCOUNTS: list = [
         {
+            "currency": "SAR",
+            "account_name": "Abdulkarim H Al Sinan & Partner For Trading Company شركة عبدالكريم حسين السنان وشريكه للتجارة",
+            "account_no": "06514207040103",
+            "swift": "NCBKSAJE",
+            "bank": "Saudi National Bank البنك الأهلي السعودي",
+            "branch": "Main Branch, Jubail, Kingdom of Saudi Arabia الفرع الرئيسي ، الجبيل ، المملكة العربية السعودية",
+            "iban": "SA0210000006514207040103",
+        },
+        {
             "currency": "USD",
             "account_name": "Abdulkarim H. Al Sinan & Partner For Trading Company شركة عبدالكريم حسين السنان وشريكه للتجارة",
             "account_no": "3232820640440",
