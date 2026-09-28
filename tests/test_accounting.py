@@ -155,12 +155,13 @@ def test_tc06_journal_entries_list(client, auth):
 # ─────────────────────────────────────────────
 
 @pytest.fixture(scope="module")
-def created_entry(client, auth):
+def created_entry(client, auth, created_account):
     r = client.post(f"{ACC_URL}/journal-entries", headers=auth, json={
         "entry_date":   "2026-05-01",
         "description":  "Test utility payment",
         "debit_amount": 500.00,
         "credit_amount": 0,
+        "account_id":   created_account["id"],
     })
     assert r.status_code == 201, r.text
     return r.json()

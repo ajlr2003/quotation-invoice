@@ -91,6 +91,9 @@ class SalesInvoiceCreate(BaseModel):
     customer_postal_code: Optional[str] = None
     customer_tax_id: Optional[str] = None
     customer_cr_no: Optional[str] = None
+    # Internal only — not printed on the PDF; used for "Email invoice".
+    email: Optional[str] = None
+    contact_person: Optional[str] = None
 
     # Header references
     delivery_note_no: Optional[str] = None
@@ -165,6 +168,8 @@ class SalesInvoiceResponse(BaseModel):
     customer_postal_code: Optional[str] = None
     customer_tax_id: Optional[str] = None
     customer_cr_no: Optional[str] = None
+    email: Optional[str] = None
+    contact_person: Optional[str] = None
 
     delivery_note_no: Optional[str] = None
     delivery_date: Optional[_Date] = None

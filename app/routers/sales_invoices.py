@@ -14,6 +14,7 @@
 #   DELETE /{id}                      delete a draft (posted invoices can only be cancelled)
 #   POST   /{id}/post                 confirm — assigns the sequential number
 #   POST   /{id}/cancel               cancel a posted invoice with no payments
+#   POST   /{id}/email                 email the PDF to the customer
 #   POST   /{id}/payments             record a payment
 #   DELETE /{id}/payments/{pid}       void a payment
 #   GET    /{id}/pdf                  download the PDF
@@ -110,6 +111,12 @@ async def post_invoice(invoice_id: uuid.UUID, db: AsyncSession = Depends(get_db)
              summary="Cancel a posted invoice that has no payments")
 async def cancel_invoice(invoice_id: uuid.UUID, db: AsyncSession = Depends(get_db), user=Depends(_finance)):
     return await svc.cancel_invoice(db, invoice_id, user.id)
+
+
+@router.post("/{invoice_id}/email", response_model=SalesInvoiceResponse,
+             summary="Email the invoice PDF to the customer")
+async def email_invoice(invoice_id: uuid.UUID, db: AsyncSession = Depends(get_db), user=Depends(_finance)):
+    return await svc.email_invoice(db, invoice_id, user.id)
 
 
 @router.post("/{invoice_id}/payments", response_model=SalesInvoiceResponse,

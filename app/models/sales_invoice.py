@@ -66,6 +66,10 @@ class SalesInvoice(AuditMixin, Base):
     customer_postal_code: Mapped[Optional[str]] = mapped_column(String(20))
     customer_tax_id: Mapped[Optional[str]] = mapped_column(String(100))   # buyer VAT number
     customer_cr_no: Mapped[Optional[str]] = mapped_column(String(100))     # buyer commercial registration
+    # Internal use only — never printed on the PDF (the reference invoice has
+    # no email field), used to send the invoice to the customer.
+    email: Mapped[Optional[str]] = mapped_column(String(255))
+    contact_person: Mapped[Optional[str]] = mapped_column(String(255))
 
     # ── Invoice references (the header block of the printed invoice) ──────────
     delivery_note_no: Mapped[Optional[str]] = mapped_column(String(255))

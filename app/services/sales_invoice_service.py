@@ -47,6 +47,9 @@ from app.schemas.sales_invoice import (
 )
 from app.services import activity_service
 from app.services.sales_invoice_pdf import build_invoice_pdf
+from app.utils.email import send_email_with_pdf
+import re
+_EMAIL_RE = re.compile(r'^[^@\s]+@[^@\s]+\.[^@\s]+$')
 
 BASE_CURRENCY = "SAR"
 # SAR per 1 unit — USD and AED are pegged, so their rate needn't be typed.
@@ -119,6 +122,8 @@ def _apply_fields(inv: SalesInvoice, payload: SalesInvoiceCreate) -> None:
     inv.customer_postal_code = _blank(payload.customer_postal_code)
     inv.customer_tax_id = _blank(payload.customer_tax_id)
     inv.customer_cr_no = _blank(payload.customer_cr_no)
+    inv.email = _blank(payload.email)
+    inv.contact_person = _blank(payload.contact_person)
     inv.delivery_note_no = _blank(payload.delivery_note_no)
     inv.delivery_date = payload.delivery_date
     inv.your_ref = _blank(payload.your_ref)
@@ -481,6 +486,48 @@ async def get_kpis(db: AsyncSession) -> SalesInvoiceKPIs:
         invoice_count=int(row[5]),
         other_currency_invoices=int(row[6]),
     )
+
+
+async def email_invoice(db: AsyncSession, invoice_id: uuid.UUID, user_id: Optional[uuid.UUID]) -> SalesInvoiceResponse:
+    """Email the invoice PDF to the customer. Only posted/paid invoices are
+
+    real tax invoices worth emailing; drafts must be confirmed first.
+    Unlike a status transition, delivery failure is surfaced as an error
+    rather than silently marked as sent.
+    """
+    inv = await _load(db, invoice_id)
+    _require_status(inv, SalesInvoiceStatus.POSTED, SalesInvoiceStatus.PAID, action="email")
+    if not inv.email:
+        raise HTTPException(
+            status_code=status.HTTP_400_BAD_REQUEST,
+            detail="This invoice has no customer email address — edit the draft to add one before confirming, or add it now.",
+        )
+    if not _EMAIL_RE.match(inv.email.strip()):
+        raise HTTPException(status_code=status.HTTP_400_BAD_REQUEST, detail=f"'{inv.email}' is not a valid email address")
+
+    pdf_buf = build_invoice_pdf(inv)
+    try:
+        await send_email_with_pdf(
+            to_addr=inv.email,
+            subject=f"Invoice {inv.invoice_number} — {settings.SELLER_NAME.split(' ')[0]}",
+            body=(
+                f"Dear {inv.contact_person or inv.customer_name},\n\n"
+                f"Please find attached invoice {inv.invoice_number} for "
+                f"{inv.total:,.2f} {inv.currency}, due {inv.due_date or 'on receipt'}.\n\n"
+                f"Best regards,\n{settings.SELLER_NAME}"
+            ),
+            pdf_bytes=pdf_buf.getvalue(),
+            pdf_filename=f"{inv.invoice_number.replace('/', '-')}.pdf",
+        )
+    except Exception as exc:
+        raise HTTPException(status_code=status.HTTP_502_BAD_GATEWAY, detail=f"Email delivery failed: {exc}")
+
+    activity_service.log_activity(
+        db, ActivityEntityType.SALES_INVOICE, inv.id, "emailed",
+        f"Invoice emailed to {inv.email}", user_id,
+    )
+    await db.flush()
+    return await _reload_response(db, inv.id)
 
 
 async def generate_pdf(db: AsyncSession, invoice_id: uuid.UUID) -> StreamingResponse:

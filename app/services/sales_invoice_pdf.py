@@ -17,6 +17,7 @@
 
 from __future__ import annotations
 
+from datetime import date, datetime
 from io import BytesIO
 from pathlib import Path
 
@@ -26,12 +27,13 @@ from reportlab.lib import colors
 from reportlab.pdfbase import pdfmetrics
 from reportlab.pdfbase.ttfonts import TTFont
 from reportlab.pdfgen import canvas as rl_canvas
-from reportlab.platypus import BaseDocTemplate, Flowable, Frame, PageTemplate, Spacer, Table, TableStyle
+from reportlab.platypus import BaseDocTemplate, Flowable, Frame, Image, PageTemplate, Spacer, Table, TableStyle
 
 from app.config import settings
 from app.models.enums import SalesInvoiceStatus
 from app.models.sales_invoice import SalesInvoice
 from app.services.amount_words import amount_in_words
+from app.services.zatca import build_zatca_qr_image
 
 ASSETS = Path(__file__).resolve().parent.parent / "assets"
 
@@ -375,6 +377,24 @@ def _empty_box() -> Table:
     return t
 
 
+def _zatca_qr_block(inv: SalesInvoice):
+    """ZATCA Phase 1 simplified-tax-invoice QR code (posted invoices only —
+    a draft has no invoice number/timestamp yet, so it isn't a real tax
+    invoice). Amounts go in SAR, since that's what ZATCA's fields expect."""
+    if inv.status == SalesInvoiceStatus.DRAFT or not inv.invoice_number:
+        return None
+    ts = inv.posted_at or datetime.combine(inv.invoice_date or date.today(), datetime.min.time())
+    png = build_zatca_qr_image(
+        seller_name=settings.SELLER_NAME, vat_number=settings.SELLER_VAT_NUMBER,
+        timestamp=ts, invoice_total=float(inv.total_sar), vat_total=float(inv.vat_sar),
+    )
+    qr = Image(png, width=60, height=60)
+    caption = BiText("ZATCA QR — Simplified Tax Invoice\nرمز الاستجابة السريعة — فاتورة ضريبية مبسطة", size=6.5, align="left")
+    t = Table([[qr, caption]], colWidths=[70.0, CONTENT_W - 70.0], rowHeights=[62.0])
+    t.setStyle(TableStyle([("VALIGN", (0, 0), (-1, -1), "MIDDLE"), ("LEFTPADDING", (0, 0), (0, 0), 4)]))
+    return t
+
+
 # ── Page furniture (letterhead, footer, "Page X of Y") ────────────────────────
 
 class _InvoiceCanvas(rl_canvas.Canvas):
@@ -424,7 +444,11 @@ def build_invoice_pdf(inv: SalesInvoice) -> BytesIO:
     bank = _bank_table(inv)
     if bank is not None:
         story += [Spacer(1, 0.6), bank]
-    story += [Spacer(1, 13.1), _notes_table(inv), Spacer(1, 29.4), _empty_box()]
+    qr_block = _zatca_qr_block(inv)
+    story += [Spacer(1, 13.1), _notes_table(inv), Spacer(1, 10.0),
+              qr_block if qr_block is not None else Spacer(1, 19.4)]
+    if qr_block is None:
+        story += [Spacer(1, 10.0), _empty_box()]
 
     buf = BytesIO()
     doc = BaseDocTemplate(
