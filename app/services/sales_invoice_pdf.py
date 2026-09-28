@@ -60,6 +60,7 @@ _fonts_ready = False
 
 
 def _register_fonts() -> None:
+    """Register the bundled fonts with ReportLab once per process."""
     global _fonts_ready
     if _fonts_ready:
         return
@@ -72,11 +73,13 @@ def _register_fonts() -> None:
 # ── Bilingual text ────────────────────────────────────────────────────────────
 
 def _is_arabic(ch: str) -> bool:
+    """True for a character in one of the Arabic Unicode blocks."""
     o = ord(ch)
     return 0x0600 <= o <= 0x06FF or 0x0750 <= o <= 0x077F or 0xFB50 <= o <= 0xFDFF or 0xFE70 <= o <= 0xFEFF
 
 
 def _has_arabic(text: str) -> bool:
+    """True if any character in ``text`` is Arabic — used to skip shaping pure-Latin lines."""
     return any(_is_arabic(c) for c in text)
 
 
@@ -163,10 +166,12 @@ class BiText(Flowable):
 # ── Table helpers ─────────────────────────────────────────────────────────────
 
 def _cell(text, align="center", **kw) -> BiText:
+    """Shorthand for a table cell's ``BiText`` flowable."""
     return BiText(text, align=align, **kw)
 
 
 def _grid_style(extra=None, valign="TOP") -> TableStyle:
+    """The 0.5pt black grid + padding shared by every bordered table on the invoice."""
     base = [
         ("GRID", (0, 0), (-1, -1), GRID, BLACK),
         ("VALIGN", (0, 0), (-1, -1), valign),
@@ -192,10 +197,12 @@ def _band(cells: list[tuple[str, str]], widths: list[float], size=10.0) -> Table
 
 
 def _money(n) -> str:
+    """Thousands-separated, 2dp — the number only, no currency code/symbol."""
     return f"{float(n or 0):,.2f}"
 
 
-def _d(v) -> str:
+def _fmt_date(v) -> str:
+    """ISO date string, or empty (not "None") when unset."""
     return v.isoformat() if v else ""
 
 
@@ -211,6 +218,10 @@ _TERMS_AR = {
 
 
 def _terms_text(terms: str | None) -> str:
+    """Payment terms with their Arabic translation appended, for the known set
+    of standard terms (Net 15/30/45/60, Immediate Payment, Due on Receipt).
+    An unrecognised (freeform) term is printed English-only.
+    """
     if not terms:
         return ""
     ar = _TERMS_AR.get(terms.strip().lower())
@@ -218,8 +229,12 @@ def _terms_text(terms: str | None) -> str:
 
 
 # ── Sections ──────────────────────────────────────────────────────────────────
+# Each of these builds one visual block of the invoice, top to bottom, and is
+# assembled into the final page by build_invoice_pdf() at the bottom of the
+# file — see that function for the overall page layout.
 
 def _title_box() -> Table:
+    """The boxed "فاتورة / Invoice" title under the letterhead."""
     t = Table([[_cell("فاتورة", size=14)], [_cell("Invoice", size=14)]], colWidths=[250.0], rowHeights=[24.1, 24.1])
     t.setStyle(_grid_style(valign="MIDDLE"))
     t.hAlign = "CENTER"
@@ -227,14 +242,15 @@ def _title_box() -> Table:
 
 
 def _meta_table(inv: SalesInvoice) -> Table:
+    """Header reference table: invoice/delivery dates, payment terms, PO ref, etc."""
     number = inv.invoice_number or ("Draft" if inv.status == SalesInvoiceStatus.DRAFT else "")
     rows = [
         ("Invoice Number", number, "رقم الفاتورة"),
-        ("Invoice Date", _d(inv.invoice_date), "تاريخ الفاتورة"),
+        ("Invoice Date", _fmt_date(inv.invoice_date), "تاريخ الفاتورة"),
         ("Delivery Note No", inv.delivery_note_no, "رقم إيصال التوصيل"),
-        ("Delivery Date", _d(inv.delivery_date), "تاريخ التوصيل"),
+        ("Delivery Date", _fmt_date(inv.delivery_date), "تاريخ التوصيل"),
         ("Term of Payment", _terms_text(inv.payment_terms), "طريقة الدفع"),
-        ("Due Date", _d(inv.due_date), "تاريخ الاستحقاق"),
+        ("Due Date", _fmt_date(inv.due_date), "تاريخ الاستحقاق"),
         ("Customer's PO Ref", inv.your_ref, "رقم أمر الشراء"),
         ("Vendor Number for Al Sinan", inv.vendor_number, "رقم المورد للشركة السنان"),
         ("Internal Reference Number For Al Sinan", inv.internal_reference, "الرقم الإشاري للشركة"),
@@ -268,6 +284,8 @@ _ADDR_LABELS = [
 
 
 def _parties(inv: SalesInvoice) -> Table:
+    """Seller (fixed, from settings) and Buyer (from the invoice) address blocks,
+    side by side under the "Seller / Buyer" band."""
     s = settings
     seller_vals = [s.SELLER_NAME, s.SELLER_BUILDING, s.SELLER_STREET, s.SELLER_DISTRICT, s.SELLER_CITY,
                    s.SELLER_COUNTRY, s.SELLER_POSTAL_CODE, s.SELLER_VAT_NUMBER, s.SELLER_CR_NO]
@@ -289,6 +307,9 @@ _ITEM_COLS = [40.9, 35.1, 190.2, 42.4, 42.5, 55.5, 42.5, 41.9, 42.4, 90.1]
 
 
 def _items_table(inv: SalesInvoice) -> Table:
+    """Line-items table: one row per item, VAT computed per line (matching how
+    the totals table itself sums up), with the header row repeated on
+    every page for a multi-page invoice."""
     heads = [
         "Serial\nNumber\nالرقم\nالتسلسلي", "Material\nNumber\nرقم\nالمواد", "Item Description\nوصف الصنف",
         "Unit Price\nسعر\nالوحدة", "Quantity\nالكمية", "Unit of\nMeasurement\n(UOM)\nوحدة القياس",
@@ -315,6 +336,10 @@ _TOTAL_COLS = [188.0, 155.8, 155.8, 124.4]
 
 
 def _totals_table(inv: SalesInvoice) -> Table:
+    """Subtotal/discount/VAT/total rows, each with its amount spelled out in
+    words (English + Arabic). Foreign-currency invoices get two extra rows
+    showing VAT and total converted to SAR, since that's what a Saudi
+    counterparty ultimately needs for their own books."""
     cur = inv.currency
     rate = f"{float(inv.vat_rate):g}"
     foreign = cur != "SAR"
@@ -350,6 +375,9 @@ def _totals_table(inv: SalesInvoice) -> Table:
 
 
 def _bank_table(inv: SalesInvoice) -> Table | None:
+    """Bank details matching the invoice's currency, or None to omit the whole
+    block — e.g. no SAR account is configured, so a SAR invoice prints
+    without one rather than showing a foreign-currency account by mistake."""
     acct = next((a for a in settings.COMPANY_BANK_ACCOUNTS if a.get("currency") == inv.currency), None)
     if acct is None:
         return None
@@ -363,6 +391,7 @@ def _bank_table(inv: SalesInvoice) -> Table | None:
 
 
 def _notes_table(inv: SalesInvoice) -> Table:
+    """The "Notes / ملاحظات" box — always present, empty when there are no remarks."""
     t = Table([[_cell("ملاحظات", "center")], [_cell(inv.remarks or "", "center")]], colWidths=[CONTENT_W],
               rowHeights=[None, 21.5])
     t.setStyle(_grid_style())
@@ -398,6 +427,16 @@ def _zatca_qr_block(inv: SalesInvoice):
 # ── Page furniture (letterhead, footer, "Page X of Y") ────────────────────────
 
 class _InvoiceCanvas(rl_canvas.Canvas):
+    """Canvas that stamps the letterhead, footer and "Page X of Y" on every
+    page — including the total page count, which ReportLab doesn't know
+    until the whole document has been laid out.
+
+    The trick: ``showPage`` doesn't actually emit the page, it just snapshots
+    the canvas state and starts a fresh one. Only once ``save()`` is called
+    (so the true page total is known) do we replay every snapshot, drawing
+    the page furniture on each before finally emitting it for real.
+    """
+
     def __init__(self, *args, **kwargs):
         super().__init__(*args, **kwargs)
         self._states: list[dict] = []
@@ -415,6 +454,7 @@ class _InvoiceCanvas(rl_canvas.Canvas):
         super().save()
 
     def _decorate(self, page: int, total: int) -> None:
+        """Draw the letterhead/footer images and page number on the current page."""
         x, y, w, h = LETTERHEAD
         self.drawImage(str(ASSETS / "invoice" / "letterhead.jpg"), x, PAGE_H - y - h, w, h)
         x, y, w, h = FOOTER_IMG
@@ -427,6 +467,23 @@ class _InvoiceCanvas(rl_canvas.Canvas):
 # ── Entry point ───────────────────────────────────────────────────────────────
 
 def build_invoice_pdf(inv: SalesInvoice) -> BytesIO:
+    """Render ``inv`` as a complete invoice PDF and return it as an in-memory buffer.
+
+    Assembles the section builders above, top to bottom, into a ReportLab
+    "story" that auto-paginates (see ``_items_table``'s ``repeatRows`` and
+    ``_InvoiceCanvas`` for the letterhead/footer/page-number on every page).
+    Bank details and the ZATCA QR code are each included only when
+    applicable (see ``_bank_table`` and ``_zatca_qr_block``); the layout
+    below fills the resulting gap with a blank spacer/box so the page still
+    matches the reference invoice's proportions.
+
+    Args:
+        inv: The invoice to render. Works for drafts too (no invoice number
+            yet, no QR code) so users can preview before confirming.
+
+    Returns:
+        A ``BytesIO`` positioned at the start, containing the PDF bytes.
+    """
     _register_fonts()
 
     story = [

@@ -148,18 +148,22 @@ class SalesInvoice(AuditMixin, Base):
     # ── Display helpers (need created_by / sales_order eagerly loaded) ────────
     @property
     def balance(self) -> float:
+        """Outstanding amount still owed, in the invoice's own currency."""
         return round(float(self.total or 0) - float(self.amount_paid or 0), 2)
 
     @property
     def taxable_amount(self) -> float:
+        """Subtotal net of discount — the base VAT is calculated on."""
         return round(float(self.subtotal or 0) - float(self.discount or 0), 2)
 
     @property
     def vat_sar(self) -> float:
+        """VAT converted to SAR via ``exchange_rate`` — printed for foreign-currency invoices."""
         return round(float(self.vat or 0) * float(self.exchange_rate or 1), 2)
 
     @property
     def total_sar(self) -> float:
+        """Total converted to SAR via ``exchange_rate`` — printed for foreign-currency invoices."""
         return round(float(self.total or 0) * float(self.exchange_rate or 1), 2)
 
     @property

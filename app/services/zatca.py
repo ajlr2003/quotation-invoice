@@ -24,9 +24,18 @@ import qrcode
 
 
 def _tlv(tag: int, value: str) -> bytes:
+    """Encode one ZATCA TLV field: 1-byte tag, 1-byte length, UTF-8 value.
+
+    The length byte caps a field at 255 bytes. If the encoded value is
+    longer, it's truncated on a UTF-8 *character* boundary — slicing the raw
+    bytes at an arbitrary index (like ``data[:255]``) can land mid-character
+    for non-ASCII text (Arabic seller names are 2 bytes/char), producing an
+    invalid UTF-8 tail that a QR reader would fail to decode.
+    """
     data = value.encode("utf-8")
-    if len(data) > 255:
-        data = data[:255]  # each TLV length byte caps a field at 255 bytes
+    while len(data) > 255:
+        value = value[:-1]
+        data = value.encode("utf-8")
     return bytes([tag, len(data)]) + data
 
 

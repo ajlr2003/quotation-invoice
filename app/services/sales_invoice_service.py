@@ -48,9 +48,8 @@ from app.schemas.sales_invoice import (
 from app.services import activity_service
 from app.services.sales_invoice_pdf import build_invoice_pdf
 from app.utils.email import send_email_with_pdf
-import re
-_EMAIL_RE = re.compile(r'^[^@\s]+@[^@\s]+\.[^@\s]+$')
 
+_EMAIL_RE = re.compile(r'^[^@\s]+@[^@\s]+\.[^@\s]+$')
 BASE_CURRENCY = "SAR"
 # SAR per 1 unit — USD and AED are pegged, so their rate needn't be typed.
 PEGGED_RATES = {"SAR": 1.0, "USD": 3.75, "AED": 1.0211}
@@ -69,6 +68,7 @@ _LOAD_OPTIONS = (
 # ── Helpers ───────────────────────────────────────────────────────────────────
 
 def _r2(n: float) -> float:
+    """Round to 2dp, treating ``None`` as 0 — every money value passes through this."""
     return round(float(n or 0), 2)
 
 
@@ -95,6 +95,9 @@ def _terms_days(terms: Optional[str]) -> Optional[int]:
 
 
 def _resolve_exchange_rate(currency: str, given: Optional[float]) -> float:
+    """SAR is always 1:1. USD/AED fall back to their peg if not given explicitly;
+    any other currency must supply a rate — there's nothing sensible to default to.
+    """
     if currency == BASE_CURRENCY:
         return 1.0
     rate = given if given else PEGGED_RATES.get(currency)
@@ -107,6 +110,7 @@ def _resolve_exchange_rate(currency: str, given: Optional[float]) -> float:
 
 
 def _blank(v: Optional[str]) -> Optional[str]:
+    """Normalise an optional text field: trims whitespace, empty string -> None."""
     return (v or "").strip() or None
 
 
@@ -190,6 +194,7 @@ async def _check_number_free(
 
 
 async def _check_sales_order(db: AsyncSession, order_id: Optional[uuid.UUID]) -> None:
+    """404 if a sales_order_id was given but doesn't exist. A no-op when None."""
     if order_id is None:
         return
     exists = (await db.execute(select(SalesOrder.id).where(SalesOrder.id == order_id))).scalar_one_or_none()
@@ -198,8 +203,12 @@ async def _check_sales_order(db: AsyncSession, order_id: Optional[uuid.UUID]) ->
 
 
 async def _load(db: AsyncSession, invoice_id: uuid.UUID) -> SalesInvoice:
-    # populate_existing: a re-load after our own writes must refresh the
-    # already-identity-mapped instance (items, payments, derived fields).
+    """Fetch one invoice with its items/payments/relations eagerly loaded, or 404.
+
+    Uses ``populate_existing`` because a re-load after our own writes must
+    refresh the already-identity-mapped instance (items, payments, derived
+    fields) rather than silently return SQLAlchemy's cached version.
+    """
     result = await db.execute(
         select(SalesInvoice).where(SalesInvoice.id == invoice_id)
         .options(*_LOAD_OPTIONS).execution_options(populate_existing=True)
@@ -227,6 +236,7 @@ async def _next_invoice_number(db: AsyncSession, on_date: date) -> str:
 
 
 def _require_status(inv: SalesInvoice, *allowed: SalesInvoiceStatus, action: str) -> None:
+    """409 unless the invoice is in one of the allowed statuses for ``action``."""
     if inv.status not in allowed:
         raise HTTPException(
             status_code=status.HTTP_409_CONFLICT,
@@ -240,6 +250,11 @@ _DISPLAY_FILTERS = ("Draft", "Open", "Overdue", "Paid", "Cancelled")
 
 
 def _display_status_condition(name: str):
+    """SQL filter for one status-tab name (Draft/Open/Overdue/Paid/Cancelled).
+
+    "Open" and "Overdue" are both derived from a POSTED row plus its due date —
+    there's no separate stored status for them.
+    """
     today = date.today()
     S = SalesInvoiceStatus
     if name == "Draft":
@@ -267,6 +282,19 @@ async def list_invoices(
     skip: int = 0,
     limit: int = 100,
 ) -> SalesInvoiceListResponse:
+    """List invoices (optionally filtered by status tab and/or a text search),
+    plus the per-tab counts shown on the status sidebar.
+
+    Args:
+        db:            Active async database session.
+        status_filter: One of Draft/Open/Overdue/Paid/Cancelled, or None for all.
+        search:        Case-insensitive match against customer name or invoice number.
+        skip, limit:   Pagination.
+
+    Returns:
+        A page of invoice summaries, the total matching count, and the counts
+        for every status tab (independent of the current filter/search).
+    """
     q = select(SalesInvoice).options(selectinload(SalesInvoice.sales_order))
     if status_filter:
         q = q.where(_display_status_condition(status_filter))
@@ -293,12 +321,27 @@ async def list_invoices(
 
 
 async def get_invoice(db: AsyncSession, invoice_id: uuid.UUID) -> SalesInvoiceResponse:
+    """Fetch the full invoice, including line items and payments, or 404."""
     return SalesInvoiceResponse.model_validate(await _load(db, invoice_id))
 
 
 async def create_invoice(
     db: AsyncSession, payload: SalesInvoiceCreate, user_id: Optional[uuid.UUID]
 ) -> SalesInvoiceResponse:
+    """Create a new draft invoice.
+
+    Args:
+        db:      Active async database session.
+        payload: Invoice header, buyer details and line items.
+        user_id: UUID of the creating user, stored as ``created_by_id``.
+
+    Returns:
+        The newly created draft, with totals already computed.
+
+    Raises:
+        HTTPException: 404 if ``sales_order_id`` doesn't exist.
+        HTTPException: 409 if a hand-typed ``invoice_number`` is already in use.
+    """
     await _check_sales_order(db, payload.sales_order_id)
     await _check_number_free(db, _blank(payload.invoice_number))
     inv = SalesInvoice(status=SalesInvoiceStatus.DRAFT, created_by_id=user_id)
@@ -320,6 +363,22 @@ async def create_invoice(
 async def update_invoice(
     db: AsyncSession, invoice_id: uuid.UUID, payload: SalesInvoiceUpdate, user_id: Optional[uuid.UUID]
 ) -> SalesInvoiceResponse:
+    """Replace a draft invoice's fields and line items wholesale.
+
+    Args:
+        db:         Active async database session.
+        invoice_id: UUID of the draft to edit.
+        payload:    Full replacement invoice data (same shape as create).
+        user_id:    UUID of the acting user, for the activity log.
+
+    Returns:
+        The updated draft, with totals recomputed.
+
+    Raises:
+        HTTPException: 404 if the invoice or its ``sales_order_id`` doesn't exist.
+        HTTPException: 409 if the invoice isn't a draft, or the invoice number
+            collides with a different invoice.
+    """
     inv = await _load(db, invoice_id)
     _require_status(inv, SalesInvoiceStatus.DRAFT, action="edit")
     await _check_sales_order(db, payload.sales_order_id)
@@ -334,6 +393,12 @@ async def update_invoice(
 
 
 async def delete_draft(db: AsyncSession, invoice_id: uuid.UUID) -> None:
+    """Permanently delete a draft invoice.
+
+    Raises:
+        HTTPException: 404 if not found; 409 if it isn't a draft (posted
+            invoices are cancelled, never deleted — see ``cancel_invoice``).
+    """
     inv = await _load(db, invoice_id)
     _require_status(inv, SalesInvoiceStatus.DRAFT, action="delete")
     await db.delete(inv)
@@ -409,6 +474,12 @@ def _sync_payment_state(inv: SalesInvoice) -> None:
 async def record_payment(
     db: AsyncSession, invoice_id: uuid.UUID, payload: SalesInvoicePaymentCreate, user_id: Optional[uuid.UUID]
 ) -> SalesInvoiceResponse:
+    """Record a payment against a posted invoice; flips it to PAID once fully covered.
+
+    Raises:
+        HTTPException: 409 if the invoice isn't posted.
+        HTTPException: 400 if the payment would exceed the outstanding balance.
+    """
     inv = await _load(db, invoice_id)
     _require_status(inv, SalesInvoiceStatus.POSTED, action="record a payment on")
     amount = _r2(payload.amount)
@@ -489,11 +560,17 @@ async def get_kpis(db: AsyncSession) -> SalesInvoiceKPIs:
 
 
 async def email_invoice(db: AsyncSession, invoice_id: uuid.UUID, user_id: Optional[uuid.UUID]) -> SalesInvoiceResponse:
-    """Email the invoice PDF to the customer. Only posted/paid invoices are
+    """Email the invoice PDF to the customer's address.
 
-    real tax invoices worth emailing; drafts must be confirmed first.
-    Unlike a status transition, delivery failure is surfaced as an error
-    rather than silently marked as sent.
+    Only posted/paid invoices qualify — a draft isn't a real tax invoice yet,
+    so it must be confirmed first. Unlike a status transition (e.g. sending a
+    quotation), delivery failure here is surfaced as an error rather than
+    silently marked as sent, since there's no "sent" state to fall back on.
+
+    Raises:
+        HTTPException: 409 if the invoice is still a draft.
+        HTTPException: 400 if there's no (valid) customer email address.
+        HTTPException: 502 if the email provider rejects or fails to send it.
     """
     inv = await _load(db, invoice_id)
     _require_status(inv, SalesInvoiceStatus.POSTED, SalesInvoiceStatus.PAID, action="email")
@@ -531,6 +608,7 @@ async def email_invoice(db: AsyncSession, invoice_id: uuid.UUID, user_id: Option
 
 
 async def generate_pdf(db: AsyncSession, invoice_id: uuid.UUID) -> StreamingResponse:
+    """Stream the invoice as a downloadable PDF (see sales_invoice_pdf.build_invoice_pdf)."""
     inv = await _load(db, invoice_id)
     buf = build_invoice_pdf(inv)
     name = (inv.invoice_number or f"DRAFT-{str(inv.id)[:8]}").replace("/", "-")

@@ -16,12 +16,15 @@ from pydantic import BaseModel, ConfigDict, Field, model_validator
 
 from app.models.enums import SalesInvoiceStatus
 
+# Single source of truth for the allowed values — reused below via Literal[*PAYMENT_METHODS]
 PAYMENT_METHODS = ("bank_transfer", "cash", "cheque", "card", "other")
 
 
 # ── Items ─────────────────────────────────────────────────────────────────────
 
 class SalesInvoiceItemCreate(BaseModel):
+    """One line item as submitted when creating or editing an invoice."""
+
     catalog_no: Optional[str] = None
     item_name: str = Field(min_length=1, max_length=255)
     description: Optional[str] = None
@@ -32,6 +35,8 @@ class SalesInvoiceItemCreate(BaseModel):
 
 
 class SalesInvoiceItemResponse(BaseModel):
+    """A saved line item, including the server-computed tax columns."""
+
     id: uuid.UUID
     line_no: int
     catalog_no: Optional[str] = None
@@ -51,14 +56,18 @@ class SalesInvoiceItemResponse(BaseModel):
 # ── Payments ──────────────────────────────────────────────────────────────────
 
 class SalesInvoicePaymentCreate(BaseModel):
+    """Request body for recording a payment against a posted invoice."""
+
     amount: float = Field(gt=0)
     payment_date: Optional[_Date] = None
-    method: Literal["bank_transfer", "cash", "cheque", "card", "other"] = "bank_transfer"
+    method: Literal[*PAYMENT_METHODS] = "bank_transfer"
     reference: Optional[str] = Field(default=None, max_length=100)
     notes: Optional[str] = None
 
 
 class SalesInvoicePaymentResponse(BaseModel):
+    """A recorded payment, as returned in the invoice detail response."""
+
     id: uuid.UUID
     amount: float
     payment_date: _Date
@@ -146,6 +155,8 @@ class SalesInvoiceSummary(BaseModel):
 
 
 class SalesInvoiceListResponse(BaseModel):
+    """Paginated invoice list, plus a status-tab count breakdown for the sidebar."""
+
     items: List[SalesInvoiceSummary]
     total: int
     counts: Dict[str, int]
@@ -221,6 +232,8 @@ class SalesInvoiceResponse(BaseModel):
 
 
 class BankAccountInfo(BaseModel):
+    """One configured bank account, matched to an invoice by currency."""
+
     currency: str
     account_name: str = ""
     account_no: str = ""
@@ -246,6 +259,8 @@ class SellerProfile(BaseModel):
 
 
 class SalesInvoiceKPIs(BaseModel):
+    """Headline totals for the invoicing dashboard, in a single base currency."""
+
     currency: str = "SAR"
     other_currency_invoices: int = 0
     total_invoiced: float

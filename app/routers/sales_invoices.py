@@ -14,7 +14,7 @@
 #   DELETE /{id}                      delete a draft (posted invoices can only be cancelled)
 #   POST   /{id}/post                 confirm — assigns the sequential number
 #   POST   /{id}/cancel               cancel a posted invoice with no payments
-#   POST   /{id}/email                 email the PDF to the customer
+#   POST   /{id}/email                email the PDF to the customer
 #   POST   /{id}/payments             record a payment
 #   DELETE /{id}/payments/{pid}       void a payment
 #   GET    /{id}/pdf                  download the PDF
