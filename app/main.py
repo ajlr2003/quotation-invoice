@@ -41,7 +41,7 @@ from app.routers import (
     purchase_orders, grn, purchase_invoices, sales_quotations, sales_orders,
     dashboard, accounting, crm, payments, projects, documents, inventory, expenses,
     activity, ai_copilot, vendor_pricelists, discount_rules, config, customer_rfqs,
-    sales_invoices,
+    sales_invoices, contracts,
 )
 
 logger = logging.getLogger(__name__)
@@ -263,6 +263,7 @@ def create_application() -> FastAPI:
     app.include_router(sales_quotations.router,   prefix=f"{API_PREFIX}/sales/quotations",  tags=["Sales Quotations"])
     app.include_router(sales_orders.router,       prefix=f"{API_PREFIX}/sales/orders",      tags=["Sales Orders"])
     app.include_router(sales_invoices.router,     prefix=f"{API_PREFIX}/sales/invoices",    tags=["Sales Invoices"])
+    app.include_router(contracts.router,          prefix=f"{API_PREFIX}/contracts",         tags=["Contracts"])
     app.include_router(dashboard.router,          prefix=f"{API_PREFIX}/dashboard",         tags=["Dashboard"])
     app.include_router(accounting.router,         prefix=f"{API_PREFIX}/accounting",        tags=["Accounting"])
     app.include_router(crm.router,               prefix=f"{API_PREFIX}/crm",               tags=["CRM"])

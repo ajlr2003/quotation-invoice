@@ -202,6 +202,21 @@ class CrmLeadStage(str, enum.Enum):
     CLOSED_WON = "closed_won"
 
 
+# ── Contracts (PO payment-milestone tracker) ───────────────────────────────
+
+class ContractRiskStatus(str, enum.Enum):
+    ON_TRACK = "on_track"
+    AT_RISK  = "at_risk"
+    DELAYED  = "delayed"
+
+
+class ContractMilestoneStatus(str, enum.Enum):
+    PENDING  = "pending"
+    INVOICED = "invoiced"
+    RECEIVED = "received"
+    OVERDUE  = "overdue"
+
+
 # ── Activity log ────────────────────────────────────────────────────────────
 
 class ActivityEntityType(str, enum.Enum):
@@ -212,3 +227,4 @@ class ActivityEntityType(str, enum.Enum):
     CRM_LEAD         = "crm_lead"
     CUSTOMER_RFQ     = "customer_rfq"
     SALES_INVOICE    = "sales_invoice"
+    CONTRACT         = "contract"
